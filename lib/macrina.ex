@@ -1,18 +1,5 @@
 defmodule Macrina do
-  @moduledoc """
-  Documentation for `Macrina`.
-  """
-
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Macrina.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  def id do
+    :crypto.strong_rand_bytes(16) |> :binary.encode_hex()
   end
 end
