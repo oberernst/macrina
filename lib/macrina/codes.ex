@@ -1,4 +1,4 @@
-defmodule Macrina.CoAP.Codes do
+defmodule Macrina.Codes do
   # Method Codes
   def parse(0, 0), do: :empty
   def parse(0, 1), do: :get

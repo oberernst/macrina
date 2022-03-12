@@ -1,6 +1,6 @@
-defmodule Macrina.CoAP.Endpoint do
+defmodule Macrina.Endpoint do
   use GenServer
-  alias Macrina.CoAP.{Connection, ConnectionRegistry, ConnectionSupervisor}
+  alias Macrina.{Connection, ConnectionRegistry, ConnectionSupervisor}
 
   def start_link(port), do: GenServer.start_link(__MODULE__, port)
   def init(port), do: :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])

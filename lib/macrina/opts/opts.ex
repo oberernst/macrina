@@ -1,4 +1,4 @@
-defmodule Macrina.CoAP.Opts do
+defmodule Macrina.Opts do
   @opts [
     {1, "If-Match"},
     {3, "Uri-Host"},

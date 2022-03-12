@@ -1,7 +1,7 @@
-defmodule Macrina.CoAP.Connection do
+defmodule Macrina.Connection do
   use GenServer
 
-  alias Macrina.CoAP.{ConnectionRegistry, Request, Response}
+  alias Macrina.{ConnectionRegistry, Request, Response}
   require Logger
 
   defstruct [:handler, :ip, :port, :socket, :token]
