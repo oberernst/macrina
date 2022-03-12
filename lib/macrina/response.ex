@@ -6,10 +6,24 @@ defmodule Macrina.Response do
 
   Examples:
 
-      iex> req = %Macrina.Request{code: :empty, message_id: 1, options: [], payload: <<>>, token: <<32, 119, 204, 99>>, type: :confirmable}
+      iex> req = %Macrina.Request{
+      iex>    code: :empty,
+      iex>    message_id: 1,
+      iex>    options: [],
+      iex>    payload: <<>>,
+      iex>    token: <<32, 119, 204, 99>>,
+      iex>    type: :confirmable
+      iex>  }
       iex> res = Macrina.Response.ack(req)
       iex> Macrina.Request.decode(res)
-      {:ok, %Macrina.Request{code: :empty, message_id: 2, options: [], payload: <<>>, token: <<32, 119, 204, 99>>, type: :acknowledgement}}
+      {:ok, %Macrina.Request{
+        code: :empty,
+        message_id: 2,
+        options: [],
+        payload: <<>>,
+        token: <<32, 119, 204, 99>>,
+        type: :acknowledgement
+      }}
 
   """
   def ack(%Request{message_id: id, token: token}) do
