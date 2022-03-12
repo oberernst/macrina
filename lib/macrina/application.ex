@@ -12,7 +12,7 @@ defmodule Macrina.Application do
       # {Macrina.Worker, arg}
       {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: Macrina.ConnectionRegistry},
-      {Macrina.Endpoint, 7150}
+      {Macrina.Endpoint, port: 7150}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

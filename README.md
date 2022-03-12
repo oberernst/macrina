@@ -2,9 +2,11 @@
 
 Saint Macrina, patron of Robotics, ora pro nobis
 ---
-* CoAP binary request decoder (RFC 7253.3)
+* CoAP binary request encoding and decoding (RFC 7253.3)
 * Endpoint 
   * can receive and decode messages
+  * echoes requests
+  * can be started with arbitrary `handler` function for extending functionality
 
 ## Installation
 

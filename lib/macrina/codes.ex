@@ -30,4 +30,37 @@ defmodule Macrina.Codes do
   def parse(5, 5), do: :proxying_not_supported
 
   def parse(c, dd), do: raise("unassigned code: #{c}, #{dd}")
+
+  # Method Codes
+  def parse(:empty), do: {0, 0}
+  def parse(:get), do: {0, 1}
+  def parse(:post), do: {0, 2}
+  def parse(:put), do: {0, 3}
+  def parse(:delete), do: {0, 4}
+
+  # Response Codes
+
+  def parse(:created), do: {2, 1}
+  def parse(:deleted), do: {2, 2}
+  def parse(:valid), do: {2, 3}
+  def parse(:changed), do: {2, 4}
+  def parse(:content), do: {2, 5}
+  def parse(:bad_request), do: {4, 0}
+  def parse(:unauthorized), do: {4, 1}
+  def parse(:bad_option), do: {4, 2}
+  def parse(:forbidden), do: {4, 3}
+  def parse(:not_found), do: {4, 4}
+  def parse(:method_not_allowed), do: {4, 5}
+  def parse(:not_acceptable), do: {4, 6}
+  def parse(:precondition_failed), do: {4, 12}
+  def parse(:request_entity_too_large), do: {4, 13}
+  def parse(:unsupported_content_format), do: {4, 15}
+  def parse(:internal_server_error), do: {5, 0}
+  def parse(:not_implemented), do: {5, 1}
+  def parse(:bad_gateway), do: {5, 2}
+  def parse(:service_unavailable), do: {5, 3}
+  def parse(:gateway_timeout), do: {5, 4}
+  def parse(:proxying_not_supported), do: {5, 5}
+
+  def parse(code), do: raise("unassigned code: #{code}")
 end
