@@ -1,29 +1,56 @@
 defmodule Macrina.CoAP.Connection do
   use GenServer
 
-  defstruct [:ip4, :ip6, :port, :token]
+  alias Macrina.CoAP.{ConnectionRegistry, Request, Response}
+  require Logger
+
+  defstruct [:handler, :ip, :port, :socket, :token]
 
   @type t :: %__MODULE__{
-          ip4: :inets.ip4_address(),
-          ip6: :inets.ip6_address(),
+          handler: (t(), binary() -> :ok | {:error, term()}),
+          ip: tuple(),
           port: integer(),
+          socket: port(),
           token: binary()
         }
 
   def start_link(args) do
+    # validate args
+    ip = Keyword.fetch!(args, :ip)
     port = Keyword.fetch!(args, :port)
-    token = Keyword.fetch!(args, :token)
+    socket = Keyword.fetch!(args, :socket)
 
-    case Keyword.fetch!(args, :ip) do
-      {_, _, _, _} = ip ->
-        GenServer.start_link(__MODULE__, %__MODULE__{ip4: ip, port: port, token: token})
+    # marshall genserver requirements
+    name = {:via, Registry, {ConnectionRegistry, name(ip, port)}}
+    state = %__MODULE__{ip: ip, port: port, socket: socket}
 
-      {_, _, _, _, _, _, _, _} = ip ->
-        GenServer.start_link(__MODULE__, %__MODULE__{ip6: ip, port: port, token: token})
-    end
+    # start the genserver
+    GenServer.start_link(__MODULE__, state, name: name)
+  end
+
+  def name({_, _, _, _} = ip, port) do
+    ip |> Tuple.to_list() |> Enum.join(".") |> append_port(port)
+  end
+
+  def name({_, _, _, _, _, _, _, _} = ip, port) do
+    ip |> Tuple.to_list() |> Enum.join(":") |> append_port(port)
   end
 
   def init(state) do
     {:ok, state}
+  end
+
+  def handle_info({:coap, packet}, state) do
+    {:ok, request} = Request.decode(packet)
+    request |> Response.ack() |> Request.decode() |> inspect() |> Logger.info()
+    {:noreply, state}
+  end
+
+  def name(%__MODULE__{ip: ip, port: port}) do
+    name(ip, port)
+  end
+
+  defp append_port(ip_string, port) do
+    ip_string <> "/" <> "#{port}"
   end
 end

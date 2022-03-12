@@ -5,13 +5,16 @@ defmodule Macrina.Application do
 
   use Application
 
+  alias Macrina.CoAP
+
   @impl true
   def start(_type, _args) do
     children = [
       # Starts a worker by calling: Macrina.Worker.start_link(arg)
       # {Macrina.Worker, arg}
-      {DynamicSupervisor, name: IncidentSupervisor, strategy: :one_for_one},
-      {Registry, keys: :unique, name: IncidentRegistry}
+      {DynamicSupervisor, name: CoAP.ConnectionSupervisor, strategy: :one_for_one},
+      {Registry, keys: :unique, name: CoAP.ConnectionRegistry},
+      {CoAP.Endpoint, 7150}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
