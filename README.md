@@ -1,6 +1,10 @@
 # Macrina
 
 Saint Macrina, patron of Robotics, ora pro nobis
+---
+* CoAP binary request decoder (RFC 7253.3)
+* Endpoint 
+  * can receive and decode messages
 
 ## Installation
 
