@@ -43,31 +43,23 @@ defmodule Macrina.Message do
 
   """
   @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
-  def decode(<<
-        # CoAP header
-        version::size(2),
-        type::size(2),
-        token_length::size(4),
-        code_class::size(3),
-        code_detail::size(5),
-        message_id::size(16),
-
-        # CoAP token, options, and data
-        rest::binary
-      >>)
-      when version == 1 do
+  def decode(
+        <<1::size(2), type::size(2), token_length::size(4), code_class::size(3),
+          code_detail::size(5), message_id::size(16), rest::binary>>
+      ) do
     {token, rest} = decode_token(rest, token_length)
     {options, payload} = Binary.decode(rest)
 
-    {:ok,
-     %__MODULE__{
-       code: Codes.parse(code_class, code_detail),
-       message_id: message_id,
-       options: options,
-       payload: payload,
-       token: token,
-       type: Types.parse(type)
-     }}
+    message = %__MODULE__{
+      code: Codes.parse(code_class, code_detail),
+      message_id: message_id,
+      options: options,
+      payload: payload,
+      token: token,
+      type: Types.parse(type)
+    }
+
+    {:ok, message}
   end
 
   def decode(_request) do
@@ -79,35 +71,52 @@ defmodule Macrina.Message do
     {token, rest}
   end
 
+  @doc """
+  Encode binary coap message
+
+  Examples:
+
+      iex> message = %Macrina.Message{
+      iex>   message_id: 12796,
+      iex>   options: [{"Uri-Path", "resource"}, {"Uri-Query", "who=world"}],
+      iex>   payload: "payload",
+      iex>   token: <<123, 92, 211, 222>>,
+      iex>   type: :confirmable,
+      iex>   code: :put
+      iex> }
+      iex> Macrina.Message.encode(message)
+      <<0x44, 0x03, 0x31, 0xfc, 0x7b, 0x5c, 0xd3, 0xde, 0xb8, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x49, 0x77, 0x68, 0x6f, 0x3d, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0xff, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64>>
+
+      iex> message = %Macrina.Message{
+      iex>   message_id: Enum.random(10000..19999),
+      iex>   options: [{"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Path", "oberernst-seekrit-stash"}],
+      iex>   payload: "",
+      iex>   token: :crypto.strong_rand_bytes(8),
+      iex>   type: :non_confirmable,
+      iex>   code: :get
+      iex> }
+      iex> bin = Macrina.Message.encode(message)
+      iex> {:ok, decoded} = Macrina.Message.decode(bin)
+      iex> decoded
+      message
+
+  """
   def encode(%__MODULE__{code: :empty, message_id: id, token: token, type: :acknowledgement}) do
-    <<
-      1::unsigned-size(2),
-      2::unsigned-size(2),
-      byte_size(token)::unsigned-size(4),
-      0::unsigned-size(3),
-      0::unsigned-size(5),
-      id::unsigned-size(16),
-      token::binary,
-      0::size(0)
-    >>
+    <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
+      token::binary, 0::size(0)>>
   end
 
-  def encode(%__MODULE__{code: code, options: options, payload: payload, type: type}) do
-    id = :crypto.strong_rand_bytes(2)
-    token = :crypto.strong_rand_bytes(8)
+  def encode(%__MODULE__{
+        code: code,
+        message_id: id,
+        options: options,
+        payload: payload,
+        token: token,
+        type: type
+      }) do
     {c, dd} = Codes.parse(code)
 
-    <<
-      1::unsigned-size(2),
-      Types.parse(type)::unsigned-size(2),
-      byte_size(token)::unsigned-size(4),
-      c::unsigned-size(3),
-      dd::unsigned-size(5),
-      id::binary,
-      token::binary,
-      Binary.encode(options)::binary,
-      0xFF,
-      payload::binary
-    >>
+    <<1::size(2), Types.parse(type)::size(2), byte_size(token)::size(4), c::size(3), dd::size(5),
+      id::size(16), token::binary, Binary.encode(options)::binary, 255, payload::binary>>
   end
 end
