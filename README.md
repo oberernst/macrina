@@ -11,13 +11,23 @@ UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constant
   * can be started with arbitrary `handler` function for extending functionality
 
 ## Overview
-Macrina is an attempt to hew as close as possible to the language of the RFC. As such, the `Endpoint` is the root of the concept. 
 
-Starting an `Endpoint` with a given IP and Port combination is analogous to binding a webserver implementation to `"127.0.0.1:4000"`. The `Endpoint` itself is a `GenServer` that opens a UDP socket with `:gen_udp`. Incoming UDP packets are dispatched to `Connection` processes, one per sender IP/Port. 
+### `Macrina.Endpoint`
+A thin `GenServer` wrapper around `:gen_udp`. Given an IP and port, any incoming UDP packets at that port will be sent to the `Endpoint`. This is done via `GenServer`'s built-in `handle_info` functionality.
 
-The `Connection` handles decoding the binary CoAP message into a `Macrina.Message` and does two things with any given message: calls a provided `Handler` `call/2` function whose purpose is replying to the CoAP request, and routes that message to any `Macrina.Client` that may have been expecting it as the response to some call it made. 
+### `Macrina.Connection.Server`
+A `GenServer` that represents a connection from the local `Endpoint` that started it to some other `Endpoint`. Given an IP, port, and `Handler` module, this process serves two important functions: 
+* general message handling
+  * receiving `{:coap, binary()}` messages
+  * decoding those messages
+  * using the given `Handler` module to process the message and generate any CoAP responses
+  * sending those responses via `:gen_udp`
+* client message handling
+  * the included `Macrina.Client` uses this process to send requests
+  * clients use a `GenServer.call` to do this, which returns the response from the requested endpoint or times out
 
-This illustrates an important point: the `Connection` module is used by `Macrina.Client` for sending outbound requests as well as by the app internally as a server implementation piece.
+### `Macrina.Message`
+Used for encoding and decoding `CoAP` messages, defining a `struct` for in memory representation
 
 ## Notes
 All thanks to [@tpitale](https://github.com/tpitale/coap_ex) for his work on the actual CoAP (de|en)coding that I shamelessly copied

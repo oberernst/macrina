@@ -13,7 +13,7 @@ defmodule Macrina.Client do
   end
 
   def get(%__MODULE__{conn: pid}, url) do
-    message = Message.build(:get, options: parse_url(url), type: :con)
+    message = Message.build(:get, options: parse_url(url))
     Server.call(pid, message)
   end
 
