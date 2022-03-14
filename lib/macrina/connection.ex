@@ -81,7 +81,7 @@ defmodule Macrina.Connection do
       {:ok, %Message{message_id: id, token: token, type: :con} = message} ->
         Logger.info("#{port} received CON #{:binary.encode_hex(packet)}")
 
-        :ok = reply_to_sender(state, message)
+        :ok = handle(state, message)
         callers = reply_to_client(callers, message)
 
         state = %__MODULE__{
@@ -98,7 +98,7 @@ defmodule Macrina.Connection do
         Logger.info("#{port} received NON #{:binary.encode_hex(packet)}")
         seen_ids = [id | seen_ids]
 
-        :ok = reply_to_sender(state, message)
+        :ok = handle(state, message)
         callers = reply_to_client(callers, message)
 
         {:noreply,
@@ -110,7 +110,7 @@ defmodule Macrina.Connection do
         seen_ids = [id | seen_ids]
         tokens = List.delete(tokens, token)
 
-        :ok = reply_to_sender(state, message)
+        :ok = handle(state, message)
         callers = reply_to_client(callers, message)
 
         {:noreply,
@@ -129,7 +129,7 @@ defmodule Macrina.Connection do
     List.delete(callers, caller)
   end
 
-  defp reply_to_sender(%__MODULE__{handler: handler} = state, message) do
+  defp handle(%__MODULE__{handler: handler} = state, message) do
     if message.message_id in state.seen_ids do
       :ok
     else
