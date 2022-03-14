@@ -81,7 +81,7 @@ defmodule Macrina.Connection.Server do
       GenServer.reply(from, message)
     end
 
-    pop_caller(state, message)
+    pop_caller(state, caller)
   end
 
   defp handle(%Connection{handler: handler, ip: ip, port: port, socket: socket} = state, message) do
