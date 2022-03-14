@@ -3,7 +3,7 @@ defmodule Macrina.Connection do
   alias Macrina.{ConnectionRegistry, Handler, Message}
   require Logger
 
-  defstruct [:callers, :handler, :ids, :ip, :name, :port, :socket, :tokens]
+  defstruct [:callers, :handler, :ids, :ip, :name, :port, :seen_ids, :socket, :tokens]
 
   @type t :: %__MODULE__{
           handler: module(),
@@ -29,6 +29,7 @@ defmodule Macrina.Connection do
       ip: ip,
       port: port,
       tokens: [],
+      seen_ids: [],
       socket: socket
     }
 
@@ -56,47 +57,65 @@ defmodule Macrina.Connection do
 
   def handle_info(
         {:coap, packet},
-        %__MODULE__{callers: callers, handler: handler, ids: ids, tokens: tokens} = state
+        %__MODULE__{
+          callers: callers,
+          ids: ids,
+          port: port,
+          tokens: tokens,
+          seen_ids: seen_ids
+        } = state
       ) do
     case Message.decode(packet) do
       {:ok, %Message{message_id: id, token: token, type: :ack} = message} ->
-        Logger.info("#{state.port} received ACK #{:binary.encode_hex(packet)}")
-
+        Logger.info("#{port} received ACK #{:binary.encode_hex(packet)}")
         ids = List.delete(ids, id)
+        seen_ids = [id | seen_ids]
         tokens = List.delete(tokens, token)
 
-        :ok = handler.call(state, message)
+        :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
 
-        {:noreply, %__MODULE__{state | callers: callers, ids: ids, tokens: tokens}}
+        {:noreply,
+         %__MODULE__{state | callers: callers, ids: ids, tokens: tokens, seen_ids: seen_ids}}
 
       {:ok, %Message{message_id: id, token: token, type: :con} = message} ->
-        Logger.info("#{state.port} received CON #{:binary.encode_hex(packet)}")
+        Logger.info("#{port} received CON #{:binary.encode_hex(packet)}")
+        seen_ids = [id | seen_ids]
 
-        :ok = handler.call(state, message)
+        :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
-        state = %__MODULE__{state | callers: callers, ids: [id | ids], tokens: [token | tokens]}
+
+        state = %__MODULE__{
+          state
+          | callers: callers,
+            ids: [id | ids],
+            tokens: [token | tokens],
+            seen_ids: seen_ids
+        }
 
         {:noreply, state}
 
-      {:ok, %Message{token: token, type: :non} = message} ->
-        Logger.info("#{state.port} received NON #{:binary.encode_hex(packet)}")
+      {:ok, %Message{message_id: id, token: token, type: :non} = message} ->
+        Logger.info("#{port} received NON #{:binary.encode_hex(packet)}")
+        seen_ids = [id | seen_ids]
 
-        :ok = handler.call(state, message)
+        :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
 
-        {:noreply, %__MODULE__{state | callers: callers, tokens: [token | tokens]}}
+        {:noreply,
+         %__MODULE__{state | callers: callers, tokens: [token | tokens], seen_ids: seen_ids}}
 
       {:ok, %Message{message_id: id, token: token, type: :res} = message} ->
-        Logger.info("#{state.port} received RES #{:binary.encode_hex(packet)}")
-
+        Logger.info("#{port} received RES #{:binary.encode_hex(packet)}")
         ids = List.delete(ids, id)
+        seen_ids = [id | seen_ids]
         tokens = List.delete(tokens, token)
 
-        :ok = handler.call(state, message)
+        :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
 
-        {:noreply, %__MODULE__{state | callers: callers, ids: ids, tokens: tokens}}
+        {:noreply,
+         %__MODULE__{state | callers: callers, ids: ids, tokens: tokens, seen_ids: seen_ids}}
     end
   end
 
@@ -109,5 +128,13 @@ defmodule Macrina.Connection do
     end
 
     List.delete(callers, caller)
+  end
+
+  defp reply_to_sender(%__MODULE__{handler: handler} = state, message) do
+    if message.message_id in state.seen_ids do
+      :ok
+    else
+      handler.call(state, message)
+    end
   end
 end
