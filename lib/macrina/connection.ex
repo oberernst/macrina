@@ -73,7 +73,6 @@ defmodule Macrina.Connection do
         seen_ids = [id | seen_ids]
         tokens = List.delete(tokens, token)
 
-        :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
 
         {:noreply,
