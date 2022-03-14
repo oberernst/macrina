@@ -5,6 +5,10 @@ defmodule Macrina.Handler do
   @callback call(Connection.t(), Message.t()) :: :ok | {:error, term()}
 
   @spec call(Connection.t(), Message.t()) :: :ok | {:error, term()}
+  def call(%Connection{}, %Message{type: type}) when type in [:ack, :res] do
+    :ok
+  end
+
   def call(%Connection{ip: ip, port: port, socket: socket}, %Message{type: :con} = message) do
     Logger.info("#{port} sending ACK")
     ack = %Message{message | type: :ack}
@@ -15,7 +19,7 @@ defmodule Macrina.Handler do
   end
 
   def call(%Connection{ip: ip, port: port, socket: socket}, %Message{} = message) do
-    Logger.info("#{port} echoing #{message.type |> Atom.to_string() |> String.upcase()}")
+    Logger.info("#{port} echoing NON")
     :gen_udp.send(socket, {ip, port}, Message.encode(message))
   end
 end
