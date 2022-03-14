@@ -49,8 +49,9 @@ defmodule Macrina.Connection do
   def handle_call(
         {:request, %Message{token: token} = message},
         from,
-        %__MODULE__{callers: callers} = state
+        %__MODULE__{callers: callers, port: port} = state
       ) do
+    Logger.info("#{port} sending #{message.type |> Atom.to_string() |> String.upcase()}")
     :gen_udp.send(state.socket, {state.ip, state.port}, Message.encode(message))
     {:noreply, %__MODULE__{state | callers: [{token, from} | callers]}}
   end
@@ -80,7 +81,6 @@ defmodule Macrina.Connection do
 
       {:ok, %Message{message_id: id, token: token, type: :con} = message} ->
         Logger.info("#{port} received CON #{:binary.encode_hex(packet)}")
-        seen_ids = [id | seen_ids]
 
         :ok = reply_to_sender(state, message)
         callers = reply_to_client(callers, message)
@@ -90,7 +90,7 @@ defmodule Macrina.Connection do
           | callers: callers,
             ids: [id | ids],
             tokens: [token | tokens],
-            seen_ids: seen_ids
+            seen_ids: [id | seen_ids]
         }
 
         {:noreply, state}
