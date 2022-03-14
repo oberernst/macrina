@@ -11,7 +11,6 @@ defmodule Macrina.Application do
       # Starts a worker by calling: Macrina.Worker.start_link(arg)
       # {Macrina.Worker, arg}
       {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one},
-      {DynamicSupervisor, name: Macrina.RequestSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: Macrina.ConnectionRegistry}
     ]
 
