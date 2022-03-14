@@ -1,5 +1,5 @@
 defmodule Macrina.Message do
-  alias Macrina.{Codes, Opts.Binary, Types}
+  alias Macrina.{Codes, Message.Opts.Binary, Types}
 
   defstruct [:code, :message_id, :options, :payload, :token, :type]
 
@@ -9,8 +9,19 @@ defmodule Macrina.Message do
           options: [{String.t(), String.t()}],
           payload: String.t(),
           token: String.t(),
-          type: :acknowledgement | :confirmable | :non_confirmable | :reset
+          type: :ack | :con | :non | :res
         }
+
+  def build(code, opts \\ []) when is_atom(code) do
+    %__MODULE__{
+      code: code,
+      message_id: Keyword.get(opts, :message_id, Enum.random(10000..19999)),
+      options: Keyword.get(opts, :options, []),
+      payload: Keyword.get(opts, :payload, <<>>),
+      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(8)),
+      type: Keyword.get(opts, :type, :non)
+    }
+  end
 
   @doc """
   Decode binary coap message
@@ -25,7 +36,7 @@ defmodule Macrina.Message do
         options: [{"Uri-Path", "resource"}, {"Uri-Query", "who=world"}],
         payload: "payload",
         token: <<123, 92, 211, 222>>,
-        type: :confirmable
+        type: :con
       }}
 
       iex> message = <<68, 1, 0, 1, 163, 249, 107, 129, 57, 108, 111, 99, 97, 108, 104, 111, 115,
@@ -38,15 +49,16 @@ defmodule Macrina.Message do
         options: [{"Uri-Host", "localhost"}, {"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Query", "who=world"}],
         payload: "data",
         token: <<163, 249, 107, 129>>,
-        type: :confirmable
+        type: :con
       }}
 
   """
   @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
   def decode(
-        <<1::size(2), type::size(2), token_length::size(4), code_class::size(3),
+        <<version::size(2), type::size(2), token_length::size(4), code_class::size(3),
           code_detail::size(5), message_id::size(16), rest::binary>>
-      ) do
+      )
+      when version == 1 do
     {token, rest} = decode_token(rest, token_length)
     {options, payload} = Binary.decode(rest)
 
@@ -81,7 +93,7 @@ defmodule Macrina.Message do
       iex>   options: [{"Uri-Path", "resource"}, {"Uri-Query", "who=world"}],
       iex>   payload: "payload",
       iex>   token: <<123, 92, 211, 222>>,
-      iex>   type: :confirmable,
+      iex>   type: :con,
       iex>   code: :put
       iex> }
       iex> Macrina.Message.encode(message)
@@ -92,7 +104,7 @@ defmodule Macrina.Message do
       iex>   options: [{"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Path", "oberernst-seekrit-stash"}],
       iex>   payload: "",
       iex>   token: :crypto.strong_rand_bytes(8),
-      iex>   type: :non_confirmable,
+      iex>   type: :non,
       iex>   code: :get
       iex> }
       iex> bin = Macrina.Message.encode(message)
@@ -101,7 +113,7 @@ defmodule Macrina.Message do
       message
 
   """
-  def encode(%__MODULE__{code: :empty, message_id: id, token: token, type: :acknowledgement}) do
+  def encode(%__MODULE__{code: :empty, message_id: id, token: token, type: :ack}) do
     <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
       token::binary, 0::size(0)>>
   end

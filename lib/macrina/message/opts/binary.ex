@@ -1,5 +1,5 @@
-defmodule Macrina.Opts.Binary do
-  alias Macrina.Opts
+defmodule Macrina.Message.Opts.Binary do
+  alias Macrina.Message.Opts
 
   @type option :: {name :: binary(), value :: binary()}
   @type payload :: binary()

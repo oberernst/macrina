@@ -1,39 +1,41 @@
 defmodule Macrina.Endpoint do
   use GenServer
-  alias Macrina.{Connection, ConnectionRegistry, ConnectionSupervisor, Message}
+  alias Macrina.{Connection, ConnectionRegistry, ConnectionSupervisor}
+
+  defstruct [:socket]
 
   def start_link(args) do
-    handler = Keyword.get(args, :handler, &echo/2)
+    name = Keyword.get(args, :name, __MODULE__)
     port = Keyword.fetch!(args, :port)
-    GenServer.start_link(__MODULE__, {handler, port})
+    GenServer.start_link(__MODULE__, port, name: name)
   end
 
-  def init({handler, port}) do
-    {:ok, _socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
-    {:ok, handler}
+  def init(port) do
+    {:ok, socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
+    {:ok, %__MODULE__{socket: socket}}
   end
 
-  def handle_info({:udp, socket, ip, port, packet}, handler) do
-    case Registry.lookup(ConnectionRegistry, Connection.name(ip, port)) do
+  def socket(endpoint \\ __MODULE__) do
+    GenServer.call(endpoint, :socket)
+  end
+
+  def handle_call(:socket, _from, state) do
+    {:reply, {:ok, state.socket}, state}
+  end
+
+  def handle_info({:udp, socket, ip, port, packet}, state) do
+    conn_name = Macrina.conn_name(ip, port)
+
+    case Registry.lookup(ConnectionRegistry, conn_name) do
       [{pid, _}] ->
         send(pid, {:coap, packet})
 
       _ ->
-        init_args = {Connection, handler: handler, ip: ip, port: port, socket: socket}
+        init_args = {Connection, ip: ip, name: conn_name, port: port, socket: socket}
         {:ok, pid} = DynamicSupervisor.start_child(ConnectionSupervisor, init_args)
         send(pid, {:coap, packet})
     end
 
-    {:noreply, nil}
+    {:noreply, state}
   end
-
-  @spec echo(Connection.t(), Message.t()) :: :ok | {:error, term()}
-  def echo(
-        %Connection{ip: ip, port: port, socket: socket} = _connection,
-        %Message{type: :confirmable} = message
-      ) do
-    :gen_udp.send(socket, {ip, port}, Message.encode(message))
-  end
-
-  def echo(_, _), do: :ok
 end

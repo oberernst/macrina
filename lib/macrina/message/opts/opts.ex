@@ -1,4 +1,4 @@
-defmodule Macrina.Opts do
+defmodule Macrina.Message.Opts do
   @opts [
     {1, "If-Match"},
     {3, "Uri-Host"},
@@ -12,6 +12,8 @@ defmodule Macrina.Opts do
     {15, "Uri-Query"},
     {17, "Accept"},
     {20, "Location-Query"},
+    {23, "Block2"},
+    {27, "Block1"},
     {35, "Proxy-Uri"},
     {39, "Proxy-Scheme"},
     {60, "Size1"}
