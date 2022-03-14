@@ -18,3 +18,6 @@ Starting an `Endpoint` with a given IP and Port combination is analogous to bind
 The `Connection` handles decoding the binary CoAP message into a `Macrina.Message` and does two things with any given message: calls a provided `Handler` `call/2` function whose purpose is replying to the CoAP request, and routes that message to any `Macrina.Client` that may have been expecting it as the response to some call it made. 
 
 This illustrates an important point: the `Connection` module is used by `Macrina.Client` for sending outbound requests as well as by the app internally as a server implementation piece.
+
+## Notes
+All thanks to [@tpitale](https://github.com/tpitale/coap_ex) for his work on the actual CoAP (de|en)coding that I shamelessly copied
