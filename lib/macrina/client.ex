@@ -3,17 +3,6 @@ defmodule Macrina.Client do
 
   defstruct [:conn]
 
-  def req(verb, {ip, port}, url, payload \\ <<>>) do
-    client = build(ip, port)
-
-    case verb do
-      :get -> get(client, url)
-      :post -> post(client, url, payload)
-      :put -> put(client, url, payload)
-      :delete -> delete(client, url)
-    end
-  end
-
   def build(ip, port, endpoint \\ Endpoint) do
     {:ok, socket} = Endpoint.socket(endpoint)
 
