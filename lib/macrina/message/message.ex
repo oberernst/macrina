@@ -1,11 +1,11 @@
 defmodule Macrina.Message do
   alias Macrina.{Codes, Message.Opts.Binary, Types}
 
-  defstruct [:code, :message_id, :options, :payload, :token, :type]
+  defstruct [:code, :id, :options, :payload, :token, :type]
 
   @type t :: %__MODULE__{
           code: atom(),
-          message_id: integer(),
+          id: integer(),
           options: [{String.t(), String.t()}],
           payload: String.t(),
           token: String.t(),
@@ -15,7 +15,7 @@ defmodule Macrina.Message do
   def build(code, opts \\ []) when is_atom(code) do
     %__MODULE__{
       code: code,
-      message_id: Keyword.get(opts, :message_id, Enum.random(10000..19999)),
+      id: Keyword.get(opts, :id, Enum.random(10000..19999)),
       options: Keyword.get(opts, :options, []),
       payload: Keyword.get(opts, :payload, <<>>),
       token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(8)),
@@ -32,7 +32,7 @@ defmodule Macrina.Message do
       iex> Macrina.Message.decode(message)
       {:ok, %Macrina.Message{
         code: :put,
-        message_id: 12796,
+        id: 12796,
         options: [{"Uri-Path", "resource"}, {"Uri-Query", "who=world"}],
         payload: "payload",
         token: <<123, 92, 211, 222>>,
@@ -45,7 +45,7 @@ defmodule Macrina.Message do
       iex> Macrina.Message.decode(message)
       {:ok, %Macrina.Message{
         code: :get,
-        message_id: 1,
+        id: 1,
         options: [{"Uri-Host", "localhost"}, {"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Query", "who=world"}],
         payload: "data",
         token: <<163, 249, 107, 129>>,
@@ -56,7 +56,7 @@ defmodule Macrina.Message do
   @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
   def decode(
         <<version::size(2), type::size(2), token_length::size(4), code_class::size(3),
-          code_detail::size(5), message_id::size(16), rest::binary>>
+          code_detail::size(5), id::size(16), rest::binary>>
       )
       when version == 1 do
     {token, rest} = decode_token(rest, token_length)
@@ -64,7 +64,7 @@ defmodule Macrina.Message do
 
     message = %__MODULE__{
       code: Codes.parse(code_class, code_detail),
-      message_id: message_id,
+      id: id,
       options: options,
       payload: payload,
       token: token,
@@ -89,7 +89,7 @@ defmodule Macrina.Message do
   Examples:
 
       iex> message = %Macrina.Message{
-      iex>   message_id: 12796,
+      iex>   id: 12796,
       iex>   options: [{"Uri-Path", "resource"}, {"Uri-Query", "who=world"}],
       iex>   payload: "payload",
       iex>   token: <<123, 92, 211, 222>>,
@@ -100,7 +100,7 @@ defmodule Macrina.Message do
       <<0x44, 0x03, 0x31, 0xfc, 0x7b, 0x5c, 0xd3, 0xde, 0xb8, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x49, 0x77, 0x68, 0x6f, 0x3d, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0xff, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64>>
 
       iex> message = %Macrina.Message{
-      iex>   message_id: Enum.random(10000..19999),
+      iex>   id: Enum.random(10000..19999),
       iex>   options: [{"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Path", "oberernst-seekrit-stash"}],
       iex>   payload: "",
       iex>   token: :crypto.strong_rand_bytes(8),
@@ -113,14 +113,14 @@ defmodule Macrina.Message do
       message
 
   """
-  def encode(%__MODULE__{code: :empty, message_id: id, token: token, type: :ack}) do
+  def encode(%__MODULE__{code: :empty, id: id, token: token, type: :ack}) do
     <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
       token::binary, 0::size(0)>>
   end
 
   def encode(%__MODULE__{
         code: code,
-        message_id: id,
+        id: id,
         options: options,
         payload: payload,
         token: token,

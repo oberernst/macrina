@@ -1,6 +1,6 @@
 defmodule Macrina.Endpoint do
   use GenServer
-  alias Macrina.{Connection, ConnectionRegistry, ConnectionSupervisor}
+  alias Macrina.{Connection.Server, ConnectionRegistry, ConnectionSupervisor}
 
   defstruct [:socket]
 
@@ -31,7 +31,7 @@ defmodule Macrina.Endpoint do
         send(pid, {:coap, packet})
 
       _ ->
-        init_args = {Connection, ip: ip, name: conn_name, port: port, socket: socket}
+        init_args = {Server, ip: ip, name: conn_name, port: port, socket: socket}
         {:ok, pid} = DynamicSupervisor.start_child(ConnectionSupervisor, init_args)
         send(pid, {:coap, packet})
     end
