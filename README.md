@@ -6,6 +6,7 @@ UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constant
 * CoAP binary request encoding and decoding (RFC 7253.3)
 * Endpoint 
   * can receive and decode messages
+  * de-dups messages based on incoming IP/Port and `message_id`
   * echoes requests
   * can be started with arbitrary `handler` function for extending functionality
 
