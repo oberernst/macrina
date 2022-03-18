@@ -23,6 +23,10 @@ defmodule Macrina.Endpoint do
     {:reply, {:ok, state.socket}, state}
   end
 
+  def handle_info({:udp_error, _port, :econnreset}, state) do
+    {:noreply, state}
+  end
+
   def handle_info({:udp, socket, ip, port, packet}, state) do
     conn_name = Macrina.conn_name(ip, port)
 
