@@ -39,7 +39,7 @@ defmodule Macrina.Connection.Server do
 
   def handle_call({:request, %Message{} = message}, from, %Connection{port: port} = state) do
     bin = Message.encode(message)
-    Logger.info("#{port} sending #{message.type} #{:binary.encode_hex(bin)}")
+    Logger.info("#{port} sending #{message.type} #{Base.encode64(bin)}")
     :gen_udp.send(state.socket, {state.ip, state.port}, bin)
 
     {:noreply,
@@ -52,7 +52,7 @@ defmodule Macrina.Connection.Server do
   def handle_info({:coap, packet}, %Connection{port: port} = state) do
     case Message.decode(packet) do
       {:ok, %Message{type: type} = message} when type in [:ack, :res] ->
-        Logger.info("#{port} received #{type} #{:binary.encode_hex(packet)}")
+        Logger.info("#{port} received #{type} #{Base.encode64(packet)}")
 
         {:noreply,
          state
@@ -63,7 +63,7 @@ defmodule Macrina.Connection.Server do
          |> push_seen_id(message)}
 
       {:ok, %Message{type: type} = message} ->
-        Logger.info("#{port} received #{type} #{:binary.encode_hex(packet)}")
+        Logger.info("#{port} received #{type} #{Base.encode64(packet)}")
 
         {:noreply,
          state
