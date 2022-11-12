@@ -18,17 +18,17 @@ defmodule Macrina.Client do
   end
 
   def post(%__MODULE__{conn: pid}, url, payload \\ <<>>) do
-    message = Message.build(:post, options: parse_url(url), payload: payload)
+    message = Message.build(:post, options: parse_url(url), payload: payload, type: :con)
     Server.call(pid, message)
   end
 
   def put(%__MODULE__{conn: pid}, url, payload \\ <<>>) do
-    message = Message.build(:put, options: parse_url(url), payload: payload)
+    message = Message.build(:put, options: parse_url(url), payload: payload, type: :con)
     Server.call(pid, message)
   end
 
   def delete(%__MODULE__{conn: pid}, url) do
-    message = Message.build(:delete, options: parse_url(url))
+    message = Message.build(:delete, options: parse_url(url), type: :con)
     Server.call(pid, message)
   end
 
