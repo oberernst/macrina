@@ -41,4 +41,9 @@ defmodule Macrina.Connection do
   def push_token(%__MODULE__{tokens: tokens} = state, %Message{token: token}) do
     %__MODULE__{state | tokens: [token | tokens]}
   end
+
+  @spec reply(t(), binary()) :: :ok | {:error, term()}
+  def reply(%__MODULE__{ip: ip, port: port, socket: socket}, bin) when is_binary(bin) do
+    :gen_udp.send(socket, {ip, port}, bin)
+  end
 end
