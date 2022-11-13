@@ -84,12 +84,11 @@ defmodule Macrina.Connection.Server do
     pop_caller(state, caller)
   end
 
-  defp handle(%Connection{handler: handler, ip: ip, port: port, socket: socket} = state, message) do
+  defp handle(%Connection{handler: handler} = state, message) do
     if message.id in state.seen_ids do
       state
     else
-      {:ok, responses} = handler.call(state, message)
-      Enum.each(responses, fn bin -> :gen_udp.send(socket, {ip, port}, bin) end)
+      handler.call(state, message)
       state
     end
   end
