@@ -7,7 +7,7 @@ UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constant
 * Endpoint 
   * can receive and decode messages
   * de-dups messages based on incoming IP/Port and `id`
-  * echoes requests
+  * echoes requests by default
   * can be started with arbitrary `handler` function for extending functionality
 
 ## Overview

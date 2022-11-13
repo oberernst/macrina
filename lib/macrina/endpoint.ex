@@ -2,17 +2,18 @@ defmodule Macrina.Endpoint do
   use GenServer
   alias Macrina.{Connection.Server, ConnectionRegistry, ConnectionSupervisor}
 
-  defstruct [:socket]
+  defstruct [:handler, :socket]
 
   def start_link(args) do
+    handler = Keyword.get(args, :handler, Macrina.Handler.Echo)
     name = Keyword.get(args, :name, __MODULE__)
     port = Keyword.fetch!(args, :port)
-    GenServer.start_link(__MODULE__, port, name: name)
+    GenServer.start_link(__MODULE__, {handler, port}, name: name)
   end
 
-  def init(port) do
+  def init({handler, port}) do
     {:ok, socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
-    {:ok, %__MODULE__{socket: socket}}
+    {:ok, %__MODULE__{handler: handler, socket: socket}}
   end
 
   def socket(endpoint \\ __MODULE__) do
@@ -35,7 +36,11 @@ defmodule Macrina.Endpoint do
         send(pid, {:coap, packet})
 
       _ ->
-        init_args = {Server, ip: ip, name: conn_name, port: port, socket: socket}
+        init_args = {
+          Server,
+          handler: state.handler, ip: ip, name: conn_name, port: port, socket: socket
+        }
+
         {:ok, pid} = DynamicSupervisor.start_child(ConnectionSupervisor, init_args)
         send(pid, {:coap, packet})
     end
