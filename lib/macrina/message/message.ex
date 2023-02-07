@@ -25,7 +25,7 @@ defmodule Macrina.Message do
 
   def response(%__MODULE__{} = msg, opts \\ []) do
     %__MODULE__{
-      code: Keyword.get(opts, :code, :valid),
+      code: Keyword.get(opts, :code, msg.code),
       id: Keyword.get(opts, :id, Enum.random(10000..19999)),
       options: Keyword.get(opts, :options, []),
       payload: Keyword.get(opts, :payload, <<>>),
