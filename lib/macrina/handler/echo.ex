@@ -16,7 +16,7 @@ defmodule Macrina.Handler.Echo do
 
     [ack, echo]
     |> Enum.map(&:gen_udp.send(socket, {ip, port}, &1))
-    |> Enum.split_with(&elem(&1, 0))
+    |> Enum.split_with(&is_atom/1)
     |> case do
       {_good, [] = _bad} -> :ok
       {_good, bad} -> {:error, Enum.map(bad, &elem(&1, 1))}
