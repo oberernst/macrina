@@ -1,5 +1,6 @@
 defmodule Macrina.Endpoint do
   use GenServer
+  require Logger
   alias Macrina.{Connection.Server, ConnectionRegistry, ConnectionSupervisor}
 
   defstruct [:handler, :socket]
@@ -13,6 +14,7 @@ defmodule Macrina.Endpoint do
 
   def init({handler, port}) do
     {:ok, socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
+    Logger.info("UDP socket opened", socket: inspect(socket))
     {:ok, %__MODULE__{handler: handler, socket: socket}}
   end
 
@@ -25,10 +27,12 @@ defmodule Macrina.Endpoint do
   end
 
   def handle_info({:udp_error, _port, :econnreset}, state) do
+    Logger.error("udp connection reset")
     {:noreply, state}
   end
 
   def handle_info({:udp, socket, ip, port, packet}, state) do
+    Logger.debug("udp packet incoming", socket: inspect(socket), packet: packet)
     conn_name = Macrina.conn_name(ip, port)
 
     case Registry.lookup(ConnectionRegistry, conn_name) do
