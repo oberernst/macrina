@@ -69,6 +69,7 @@ defmodule Macrina.Connection.Server do
 
       _ ->
         Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
+        handle(state, packet)
         {:noreply, state}
     end
   end
@@ -84,12 +85,16 @@ defmodule Macrina.Connection.Server do
     pop_caller(state, caller)
   end
 
-  defp handle(%Connection{handler: handler} = state, message) do
+  defp handle(%Connection{handler: handler} = state, %Message{} = message) do
     if message.id in state.seen_ids do
       state
     else
       handler.call(state, message)
       state
     end
+  end
+
+  defp handle(state, packet) when is_binary(packet) do
+    state.handler.call(state, packet)
   end
 end
