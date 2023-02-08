@@ -1,6 +1,6 @@
 defmodule Macrina.Connection.Server do
   use GenServer
-  alias Macrina.{Connection, ConnectionRegistry, Handler.Echo, Message}
+  alias Macrina.{Connection, Handler.Echo, Message}
   import Connection, only: :functions
   require Logger
 
@@ -11,7 +11,7 @@ defmodule Macrina.Connection.Server do
     ip = Keyword.fetch!(args, :ip)
     port = Keyword.fetch!(args, :port)
     socket = Keyword.fetch!(args, :socket)
-    name = {:via, Registry, {ConnectionRegistry, Macrina.conn_name(ip, port)}}
+    name = Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
 
     state = %Connection{
       callers: [],
@@ -34,13 +34,12 @@ defmodule Macrina.Connection.Server do
   # ------------------------------------------- Server ------------------------------------------- #
 
   def init(state) do
-    Logger.info("macrina connection started", state: inspect(state))
+    Logger.info("Macrina connection started", state: inspect(state))
     {:ok, state}
   end
 
-  def handle_call({:request, %Message{} = message}, from, %Connection{port: port} = state) do
+  def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
     bin = Message.encode(message)
-    Logger.debug("#{port} sending #{message.type} #{Base.encode64(bin)}")
     :gen_udp.send(state.socket, {state.ip, state.port}, bin)
 
     {:noreply,
@@ -50,11 +49,9 @@ defmodule Macrina.Connection.Server do
      |> push_token(message)}
   end
 
-  def handle_info({:coap, packet}, %Connection{port: port} = state) do
+  def handle_info({:coap, packet}, %Connection{} = state) do
     case Message.decode(packet) do
       {:ok, %Message{type: type} = message} when type in [:ack, :res] ->
-        Logger.debug("#{port} received #{type} #{Base.encode64(packet)}")
-
         {:noreply,
          state
          |> handle(message)
@@ -63,14 +60,16 @@ defmodule Macrina.Connection.Server do
          |> pop_token(message)
          |> push_seen_id(message)}
 
-      {:ok, %Message{type: type} = message} ->
-        Logger.debug("#{port} received #{type} #{Base.encode64(packet)}")
-
+      {:ok, %Message{} = message} ->
         {:noreply,
          state
          |> handle(message)
          |> reply_to_client(message)
          |> push_seen_id(message)}
+
+      _ ->
+        Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
+        {:noreply, state}
     end
   end
 

@@ -11,8 +11,7 @@ defmodule Macrina.Application do
     children = [
       # Starts a worker by calling: Macrina.Worker.start_link(arg)
       # {Macrina.Worker, arg}
-      {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one},
-      {Registry, keys: :unique, name: Macrina.ConnectionRegistry}
+      {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
