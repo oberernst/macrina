@@ -124,7 +124,7 @@ defmodule Macrina.Message do
       message
 
   """
-  def encode(%__MODULE__{code: :empty, id: id, token: token, type: :ack}) do
+  def encode(%__MODULE__{code: :empty, id: id, token: token}) do
     <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
       token::binary, 0::size(0)>>
   end
