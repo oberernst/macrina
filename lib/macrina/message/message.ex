@@ -7,7 +7,7 @@ defmodule Macrina.Message do
           code: atom(),
           id: integer(),
           options: [{String.t(), String.t()}],
-          payload: String.t(),
+          payload: nil | String.t() | map(),
           token: String.t(),
           type: :ack | :con | :non | :res
         }
