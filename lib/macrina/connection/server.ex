@@ -84,5 +84,6 @@ defmodule Macrina.Connection.Server do
 
   defp handle(%Connection{} = state, message_or_packet) do
     state.handler.call(state, message_or_packet)
+    state
   end
 end
