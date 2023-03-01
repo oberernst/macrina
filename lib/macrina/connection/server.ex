@@ -20,7 +20,6 @@ defmodule Macrina.Connection.Server do
       ip: ip,
       port: port,
       tokens: [],
-      seen_ids: [],
       socket: socket
     }
 
@@ -57,15 +56,13 @@ defmodule Macrina.Connection.Server do
          |> handle(message)
          |> reply_to_client(message)
          |> pop_id(message)
-         |> pop_token(message)
-         |> push_seen_id(message)}
+         |> pop_token(message)}
 
       {:ok, %Message{} = message} ->
         {:noreply,
          state
          |> handle(message)
-         |> reply_to_client(message)
-         |> push_seen_id(message)}
+         |> reply_to_client(message)}
 
       _ ->
         Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
@@ -85,16 +82,7 @@ defmodule Macrina.Connection.Server do
     pop_caller(state, caller)
   end
 
-  defp handle(%Connection{handler: handler} = state, %Message{} = message) do
-    if message.id in state.seen_ids do
-      state
-    else
-      handler.call(state, message)
-      state
-    end
-  end
-
-  defp handle(state, packet) when is_binary(packet) do
-    state.handler.call(state, packet)
+  defp handle(%Connection{} = state, message_or_packet) do
+    state.handler.call(state, message_or_packet)
   end
 end

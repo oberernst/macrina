@@ -2,7 +2,7 @@ defmodule Macrina.Connection do
   alias Macrina.Message
   require Logger
 
-  defstruct [:callers, :handler, :ids, :ip, :name, :port, :seen_ids, :socket, :tokens]
+  defstruct [:callers, :handler, :ids, :ip, :name, :port, :socket, :tokens]
 
   @type t :: %__MODULE__{
           callers: [{binary(), tuple()}],
@@ -10,7 +10,6 @@ defmodule Macrina.Connection do
           ip: tuple(),
           name: String.t(),
           port: integer(),
-          seen_ids: [integer()],
           socket: port()
         }
 
@@ -32,10 +31,6 @@ defmodule Macrina.Connection do
 
   def push_id(%__MODULE__{ids: ids} = state, %Message{id: id}) do
     %__MODULE__{state | ids: [id | ids]}
-  end
-
-  def push_seen_id(%__MODULE__{seen_ids: seen_ids} = state, %Message{id: id}) do
-    %__MODULE__{state | seen_ids: [id | seen_ids]}
   end
 
   def push_token(%__MODULE__{tokens: tokens} = state, %Message{token: token}) do
