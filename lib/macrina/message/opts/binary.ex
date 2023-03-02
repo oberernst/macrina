@@ -124,7 +124,7 @@ defmodule Macrina.Message.Opts.Binary do
 
     cond do
       number in @unsigned -> {number, :binary.encode_unsigned(value)}
-      number in @block -> {:number, encode_block(value.number, value.more, byte_size(value.bin))}
+      number in @block -> {number, encode_block(value.number, value.more, byte_size(value.bin))}
       true -> {number, value}
     end
   end
