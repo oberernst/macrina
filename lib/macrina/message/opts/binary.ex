@@ -19,7 +19,7 @@ defmodule Macrina.Message.Opts.Binary do
     {options, payload}
   end
 
-  def decode(<<delta::size(4), len::size(4), rest::binary>>, sum, options) do
+  def decode(<<delta::4, len::4, rest::binary>>, sum, options) do
     {option_number, rest} = decode_number(delta, sum, rest)
     {option_length, rest} = decode_length(len, rest)
     {option, rest} = decode_value(option_length, rest)
@@ -32,17 +32,17 @@ defmodule Macrina.Message.Opts.Binary do
 
   @spec decode_number(integer(), integer(), binary()) :: {integer(), binary()}
   def decode_number(delta, sum, bin) when delta < 13 do
-    {delta + sum, bin}
+    {sum + delta, bin}
   end
 
   def decode_number(13, sum, bin) do
     <<delta, rest::binary>> = bin
-    {delta + sum + 13, rest}
+    {sum + delta + 13, rest}
   end
 
   def decode_number(14, sum, bin) do
     <<delta::size(16), rest::binary>> = bin
-    {delta + sum + 269, rest}
+    {sum + delta + 269, rest}
   end
 
   @spec decode_length(integer(), binary()) :: {integer(), binary()}
@@ -56,7 +56,7 @@ defmodule Macrina.Message.Opts.Binary do
   end
 
   def decode_length(14, bin) do
-    <<len, rest::binary>> = bin
+    <<len::16, rest::binary>> = bin
     {len + 269, rest}
   end
 
