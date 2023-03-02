@@ -6,9 +6,7 @@ UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constant
 * CoAP binary request encoding and decoding (RFC 7253.3)
 * Endpoint 
   * can receive and decode messages
-  * de-dups messages based on incoming IP/Port and `id`
-  * echoes requests by default
-  * can be started with arbitrary `handler` function for extending functionality
+  * started with arbitrary `handler` function for processing messages
 
 ## Overview
 
@@ -28,6 +26,3 @@ A `GenServer` that represents a connection from the local `Endpoint` that starte
 
 ### `Macrina.Message`
 Used for encoding and decoding `CoAP` messages, defining a `struct` for in memory representation
-
-## Notes
-All thanks to [@tpitale](https://github.com/tpitale/coap_ex) for his work on the actual CoAP (de|en)coding that I shamelessly copied
