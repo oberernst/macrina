@@ -110,7 +110,7 @@ defmodule Macrina.Message.Opts.Binary do
 
   def encode_block(num, more?, size) do
     m = if more?, do: 1, else: 0
-    szx = trunc(:math.log2(size) - 4)
+    szx = trunc(log2(size)) - 4
 
     cond do
       num < 16 -> <<num::4, m::1, szx::3>>
@@ -132,4 +132,6 @@ defmodule Macrina.Message.Opts.Binary do
   def encode_ext(val) when val >= 269, do: {14, <<val - 269::size(16)>>}
   def encode_ext(val) when val >= 13, do: {13, <<val - 13>>}
   def encode_ext(val), do: {val, <<>>}
+
+  defp log2(size), do: :math.log(size) / :math.log(2)
 end
