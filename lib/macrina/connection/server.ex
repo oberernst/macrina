@@ -7,7 +7,7 @@ defmodule Macrina.Connection.Server do
   # ------------------------------------------- Client ------------------------------------------- #
 
   def start_link(args) do
-    handler = Keyword.get(args, :handler, Echo)
+    handler = Keyword.get(args, :handler)
     ip = Keyword.fetch!(args, :ip)
     port = Keyword.fetch!(args, :port)
     socket = Keyword.fetch!(args, :socket)

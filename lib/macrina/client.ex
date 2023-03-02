@@ -5,8 +5,9 @@ defmodule Macrina.Client do
 
   def build(ip, port, endpoint \\ Endpoint) do
     {:ok, socket} = Endpoint.socket(endpoint)
+    {:ok, handler} = Endpoint.handler(endpoint)
 
-    case Server.start_link(ip: ip, port: port, socket: socket, type: :client) do
+    case Server.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
       {:ok, conn} -> %__MODULE__{conn: conn}
       {:error, {:already_started, conn}} -> %__MODULE__{conn: conn}
     end

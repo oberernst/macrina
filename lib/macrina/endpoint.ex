@@ -5,6 +5,8 @@ defmodule Macrina.Endpoint do
 
   defstruct [:handler, :socket]
 
+  # ------------------------------------------- CLIENT ------------------------------------------- #
+
   def start_link(args) do
     handler = Keyword.get(args, :handler, Macrina.Handler.Echo)
     name = Keyword.get(args, :name, __MODULE__)
@@ -18,8 +20,18 @@ defmodule Macrina.Endpoint do
     {:ok, %__MODULE__{handler: handler, socket: socket}}
   end
 
+  def handler(endpoint \\ __MODULE__) do
+    GenServer.call(endpoint, :handler)
+  end
+
   def socket(endpoint \\ __MODULE__) do
     GenServer.call(endpoint, :socket)
+  end
+
+  # ------------------------------------------- SERVER ------------------------------------------- #
+
+  def handle_call(:handler, _from, state) do
+    {:reply, {:ok, state.handler}, state}
   end
 
   def handle_call(:socket, _from, state) do

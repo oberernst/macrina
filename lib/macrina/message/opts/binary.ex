@@ -76,7 +76,7 @@ defmodule Macrina.Message.Opts.Binary do
 
     cond do
       option_number in @unsigned -> {:binary.decode_unsigned(value), rest}
-      option_number in @block -> {nil, rest}
+      option_number in @block -> {decode_block(value), rest}
       true -> {value, rest}
     end
   end
