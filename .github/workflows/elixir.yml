@@ -18,6 +18,7 @@ jobs:
       uses: erlef/setup-beam@v1.15.2
       with: 
         version-file: '.tool-versions'
+        version-type: strict
     - name: Restore dependencies cache
       uses: actions/cache@v2
       with:
