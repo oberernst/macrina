@@ -57,7 +57,7 @@ defmodule Macrina.Message do
       {:ok, %Macrina.Message{
         code: :get,
         id: 1,
-        options: [{"Uri-Host", "localhost"}, {"Uri-Path", "api"}, {"Uri-Path", ""}, {"Uri-Query", "who=world"}],
+        options: [{"Uri-Host", "localhost"}, {"Uri-Path", "api"}, {"Uri-Path", ""}, {"Content-Format", 0}, {"Uri-Query", "who=world"}],
         payload: "data",
         token: <<163, 249, 107, 129>>,
         type: :con
@@ -66,11 +66,10 @@ defmodule Macrina.Message do
   """
   @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
   def decode(
-        <<version::size(2), type::size(2), token_length::size(4), code_class::size(3),
-          code_detail::size(5), id::size(16), rest::binary>>
+        <<version::2, type::2, token_length::4, code_class::3, code_detail::5, id::16,
+          token::binary-size(token_length), rest::binary>>
       )
       when version == 1 do
-    {token, rest} = decode_token(rest, token_length)
     {options, payload} = Binary.decode(rest)
 
     message = %__MODULE__{
@@ -87,11 +86,6 @@ defmodule Macrina.Message do
 
   def decode(_request) do
     {:error, :bad_version}
-  end
-
-  def decode_token(bin, len) do
-    <<token::binary-size(len), rest::binary>> = bin
-    {token, rest}
   end
 
   @doc """
