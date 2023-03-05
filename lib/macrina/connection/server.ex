@@ -1,13 +1,13 @@
 defmodule Macrina.Connection.Server do
   use GenServer
-  alias Macrina.{Connection, Handler.Echo, Message}
+  alias Macrina.{Connection, Message}
   import Connection, only: :functions
   require Logger
 
   # ------------------------------------------- Client ------------------------------------------- #
 
   def start_link(args) do
-    handler = Keyword.get(args, :handler)
+    handler = Keyword.fetch!(args, :handler)
     ip = Keyword.fetch!(args, :ip)
     port = Keyword.fetch!(args, :port)
     socket = Keyword.fetch!(args, :socket)

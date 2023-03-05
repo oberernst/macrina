@@ -8,7 +8,7 @@ defmodule Macrina.Endpoint do
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
   def start_link(args) do
-    handler = Keyword.get(args, :handler, Macrina.Handler.Echo)
+    handler = Keyword.fetch!(args, :handler)
     name = Keyword.get(args, :name, __MODULE__)
     port = Keyword.fetch!(args, :port)
     GenServer.start_link(__MODULE__, {handler, port}, name: name)
