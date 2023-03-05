@@ -1,10 +1,12 @@
 defmodule Macrina.Message do
-  alias Macrina.{Codes, Message.Opts.Binary, Types}
+  alias Macrina.{Codes, Message.Opts.Binary, Message.Opts.Block, Types}
 
-  defstruct [:code, :id, :options, :payload, :token, :type]
+  defstruct [:code, :control_block, :descriptive_block, :id, :options, :payload, :token, :type]
 
   @type t :: %__MODULE__{
           code: atom(),
+          control_block: Block.t(),
+          descriptive_block: Block.t(),
           id: integer(),
           options: [{String.t(), String.t()}],
           payload: nil | String.t() | map(),
@@ -12,18 +14,49 @@ defmodule Macrina.Message do
           type: :ack | :con | :non | :res
         }
 
+  @method_codes Codes.method_codes()
+  @response_codes Codes.response_codes()
+
   def build(code, opts \\ []) when is_atom(code) do
     %__MODULE__{
       code: code,
       id: Keyword.get(opts, :id, Enum.random(10000..19999)),
       options: Keyword.get(opts, :options, []),
       payload: Keyword.get(opts, :payload, <<>>),
-      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(8)),
+      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(1)),
       type: Keyword.get(opts, :type, :non)
     }
   end
 
-  def response(%__MODULE__{} = msg, opts \\ []) do
+  def response(msg, opts \\ [])
+
+  def response(%__MODULE__{control_block: %Block{} = b} = msg, params) do
+    payload = Keyword.get(params, :payload, <<>>)
+    options = Keyword.get(params, :options, [])
+
+    payload_size = byte_size(payload)
+    offset = b.number * b.size
+
+    {part, more} =
+      if payload_size > (b.number + 1) * b.size do
+        {:binary.part(payload, offset, b.size), true}
+      else
+        {:binary.part(payload, offset, payload_size - offset), false}
+      end
+
+    block = %Block{number: b.number, more: more, size: byte_size(part)}
+
+    %__MODULE__{
+      code: Keyword.get(params, :code, :content),
+      id: msg.id,
+      options: [block | options],
+      payload: part,
+      token: msg.token,
+      type: Keyword.get(params, :type, :non)
+    }
+  end
+
+  def response(%__MODULE__{} = msg, opts) do
     %__MODULE__{
       code: Keyword.get(opts, :code, msg.code),
       id: msg.id,
@@ -71,8 +104,11 @@ defmodule Macrina.Message do
       )
       when version == 1 do
     {options, payload} = Binary.decode(rest)
+    code = Codes.parse(code_class, code_detail)
 
     message = %__MODULE__{
+      control_block: control_block(code, options),
+      descriptive_block: descriptive_block(code, options),
       code: Codes.parse(code_class, code_detail),
       id: id,
       options: options,
@@ -135,5 +171,28 @@ defmodule Macrina.Message do
 
     <<1::size(2), Types.parse(type)::size(2), byte_size(token)::size(4), c::size(3), dd::size(5),
       id::size(16), token::binary, Binary.encode(options)::binary, 255, payload::binary>>
+  end
+
+  defp control_block(code, options) when code in @method_codes do
+    get_block_option(options, "Block2")
+  end
+
+  defp control_block(code, options) when code in @response_codes do
+    get_block_option(options, "Block1")
+  end
+
+  defp descriptive_block(code, options) when code in @method_codes do
+    get_block_option(options, "Block1")
+  end
+
+  defp descriptive_block(code, options) when code in @response_codes do
+    get_block_option(options, "Block2")
+  end
+
+  defp get_block_option(options, block_name) do
+    case Enum.find(options, fn {n, _} -> n == block_name end) do
+      {_, %Block{} = block} -> block
+      _ -> nil
+    end
   end
 end

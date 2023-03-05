@@ -1,4 +1,10 @@
 defmodule Macrina.Codes do
+  @method_codes ~w(empty get post put delete)a
+  @response_codes ~w(created deleted valid changed content bad_request unauthorized bad_option forbidden not_found method_not_allowed not_acceptable precondition_failed request_entity_too_large unsupported_content_format internal_server_error not_implemented bad_gateway service_unavailable gateway_timeout  proxying_not_supported)a
+
+  def method_codes, do: @method_codes
+  def response_codes, do: @response_codes
+
   # Method Codes
   def parse(0, 0), do: :empty
   def parse(0, 1), do: :get
