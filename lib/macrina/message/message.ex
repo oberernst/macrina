@@ -37,20 +37,29 @@ defmodule Macrina.Message do
     payload_size = byte_size(payload)
     offset = b.number * b.size
 
-    {part, more} =
-      if payload_size > (b.number + 1) * b.size do
-        {:binary.part(payload, offset, b.size), true}
-      else
-        {:binary.part(payload, offset, payload_size - offset), false}
+    {code, options, payload} =
+      cond do
+        payload_size < offset ->
+          {:request_entity_too_large, [{"Size1", payload_size} | options], <<>>}
+
+        payload_size > (b.number + 1) * b.size ->
+          part = :binary.part(payload, offset, b.size)
+          block = %Block{number: b.number, more: true, size: byte_size(part)}
+          code = Keyword.get(params, :code, :content)
+          {code, [{"Block2", block} | options], part}
+
+        true ->
+          part = :binary.part(payload, offset, payload_size - offset)
+          block = %Block{number: b.number, more: true, size: byte_size(part)}
+          code = Keyword.get(params, :code, :content)
+          {code, [{"Block2", block} | options], part}
       end
 
-    block = %Block{number: b.number, more: more, size: byte_size(part)}
-
     %__MODULE__{
-      code: Keyword.get(params, :code, :content),
+      code: code,
       id: msg.id,
-      options: [block | options],
-      payload: part,
+      options: options,
+      payload: payload,
       token: msg.token,
       type: Keyword.get(params, :type, :non)
     }
