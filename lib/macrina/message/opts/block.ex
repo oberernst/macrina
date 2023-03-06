@@ -1,3 +1,4 @@
 defmodule Macrina.Message.Opts.Block do
-  defstruct [:bin, :number, :more, :size]
+  @type t :: %__MODULE__{number: integer(), more: boolean(), size: integer()}
+  defstruct [:number, :more, :size]
 end

@@ -14,25 +14,38 @@ defmodule Macrina.Message do
           type: :ack | :con | :non | :res
         }
 
+  @max_block_size 1024
   @method_codes Codes.method_codes()
   @response_codes Codes.response_codes()
+  @valid_codes @method_codes ++ @response_codes
 
-  def build(code, opts \\ []) when is_atom(code) do
+  def build(code, opts \\ []) when is_atom(code) when code in @valid_codes do
+    options = Keyword.get(opts, :options, [])
+    control_block_in_opts = control_block(code, options)
+    descriptive_block_in_opts = descriptive_block(code, options)
+
     %__MODULE__{
       code: code,
+      control_block: Keyword.get(opts, :control_block, control_block_in_opts),
+      descriptive_block: Keyword.get(opts, :descriptive_block, descriptive_block_in_opts),
       id: Keyword.get(opts, :id, Enum.random(10000..19999)),
       options: Keyword.get(opts, :options, []),
       payload: Keyword.get(opts, :payload, <<>>),
-      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(1)),
+      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(4)),
       type: Keyword.get(opts, :type, :non)
     }
   end
 
   def response(msg, opts \\ [])
 
+  def response(%__MODULE__{control_block: %Block{size: s}} = m, _) when s > @max_block_size do
+    build(:bad_request, id: m.id, token: m.token, type: :non)
+  end
+
   def response(%__MODULE__{control_block: %Block{} = b} = msg, params) do
     payload = Keyword.get(params, :payload, <<>>)
     options = Keyword.get(params, :options, [])
+    code = Keyword.get(params, :code, :content)
 
     payload_size = byte_size(payload)
     offset = b.number * b.size
@@ -40,40 +53,26 @@ defmodule Macrina.Message do
     {code, options, payload} =
       cond do
         payload_size < offset ->
-          {:request_entity_too_large, [{"Size1", payload_size} | options], <<>>}
+          {:bad_request, options, <<>>}
 
         payload_size > (b.number + 1) * b.size ->
           part = :binary.part(payload, offset, b.size)
           block = %Block{number: b.number, more: true, size: byte_size(part)}
-          code = Keyword.get(params, :code, :content)
           {code, [{"Block2", block} | options], part}
 
         true ->
           part = :binary.part(payload, offset, payload_size - offset)
           block = %Block{number: b.number, more: true, size: byte_size(part)}
-          code = Keyword.get(params, :code, :content)
           {code, [{"Block2", block} | options], part}
       end
 
-    %__MODULE__{
-      code: code,
-      id: msg.id,
-      options: options,
-      payload: payload,
-      token: msg.token,
-      type: Keyword.get(params, :type, :non)
-    }
+    build(code, id: msg.id, options: options, payload: payload, token: msg.token)
   end
 
-  def response(%__MODULE__{} = msg, opts) do
-    %__MODULE__{
-      code: Keyword.get(opts, :code, msg.code),
-      id: msg.id,
-      options: Keyword.get(opts, :options, []),
-      payload: Keyword.get(opts, :payload, <<>>),
-      token: msg.token,
-      type: Keyword.get(opts, :type, :non)
-    }
+  def response(%__MODULE__{id: id, token: token}, opts) do
+    code = Keyword.get(opts, :code, :valid)
+    opts = opts |> Keyword.put(:id, id) |> Keyword.put(:token, token)
+    build(code, opts)
   end
 
   @doc """
@@ -163,6 +162,7 @@ defmodule Macrina.Message do
       message
 
   """
+  @spec encode(t()) :: binary()
   def encode(%__MODULE__{code: :empty, id: id, token: token}) do
     <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
       token::binary, 0::size(0)>>
@@ -182,6 +182,7 @@ defmodule Macrina.Message do
       id::size(16), token::binary, Binary.encode(options)::binary, 255, payload::binary>>
   end
 
+  @spec control_block(atom(), keyword()) :: Block.t() | nil
   defp control_block(code, options) when code in @method_codes do
     get_block_option(options, "Block2")
   end
@@ -190,6 +191,7 @@ defmodule Macrina.Message do
     get_block_option(options, "Block1")
   end
 
+  @spec descriptive_block(atom(), keyword()) :: Block.t() | nil
   defp descriptive_block(code, options) when code in @method_codes do
     get_block_option(options, "Block1")
   end
