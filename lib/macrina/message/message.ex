@@ -38,8 +38,10 @@ defmodule Macrina.Message do
 
   def response(msg, opts \\ [])
 
-  def response(%__MODULE__{control_block: %Block{size: s}} = m, _) when s > @max_block_size do
-    build(:bad_request, id: m.id, token: m.token, type: :non)
+  def response(%__MODULE__{control_block: %Block{size: s}} = m, params)
+      when s > @max_block_size do
+    type = Keyword.get(params, :type, :non)
+    build(:bad_request, id: m.id, token: m.token, type: type)
   end
 
   def response(%__MODULE__{control_block: %Block{} = b} = msg, params) do
@@ -66,7 +68,10 @@ defmodule Macrina.Message do
           {code, [{"Block2", block} | options], part}
       end
 
-    build(code, id: msg.id, options: options, payload: payload, token: msg.token)
+    new_params =
+      Keyword.merge(params, id: msg.id, options: options, payload: payload, token: msg.token)
+
+    build(code, new_params)
   end
 
   def response(%__MODULE__{id: id, token: token}, opts) do
