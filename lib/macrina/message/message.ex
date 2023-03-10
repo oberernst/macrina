@@ -64,7 +64,7 @@ defmodule Macrina.Message do
 
         true ->
           part = :binary.part(payload, offset, payload_size - offset)
-          block = %Block{number: b.number, more: true, size: byte_size(part)}
+          block = %Block{number: b.number, more: false, size: byte_size(part)}
           {code, [{"Block2", block} | options], part}
       end
 
