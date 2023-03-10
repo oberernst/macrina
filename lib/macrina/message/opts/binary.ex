@@ -38,7 +38,7 @@ defmodule Macrina.Message.Opts.Binary do
   def decode_block(<<num::28, m::1, szx::3>>), do: decode_block(num, m, szx)
 
   def decode_block(num, m, szx) do
-    %Block{number: num, more: m == 1, size: :math.pow(2, szx + 4) |> trunc()}
+    %Block{number: num, more: m == 1, size: :math.pow(2, szx + 4) |> Float.ceil() |> trunc()}
   end
 
   @spec decode_length(integer(), binary()) :: {integer(), binary()}
@@ -110,7 +110,7 @@ defmodule Macrina.Message.Opts.Binary do
 
   def encode_block(num, more?, size) do
     m = if more?, do: 1, else: 0
-    szx = trunc(log2(size)) - 4
+    szx = (size |> :math.log2() |> Float.ceil() |> trunc()) - 4
 
     cond do
       num < 16 -> <<num::4, m::1, szx::3>>
