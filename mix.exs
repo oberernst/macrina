@@ -4,10 +4,12 @@ defmodule Macrina.MixProject do
   def project do
     [
       app: :macrina,
+      description: "A CoAP client and server for Elixir",
       version: "0.1.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      source_url: "https://github.com/oberernst/macrina"
     ]
   end
 
