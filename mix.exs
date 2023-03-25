@@ -9,7 +9,11 @@ defmodule Macrina.MixProject do
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      source_url: "https://github.com/oberernst/macrina"
+      source_url: "https://github.com/oberernst/macrina",
+      package: [
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/oberernst/macrina"}
+      ]
     ]
   end
 
