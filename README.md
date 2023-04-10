@@ -4,6 +4,7 @@ Saint Macrina, patron of Robotics, ora pro nobis
 ---
 UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constantly. LMK if you'd like this to change
 * CoAP binary request encoding and decoding (RFC 7253.3)
+* CoAP Block Transfers (RFC 7959)
 * Endpoint 
   * can receive and decode messages
   * started with arbitrary `handler` function for processing messages
