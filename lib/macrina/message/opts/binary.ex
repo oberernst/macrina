@@ -5,7 +5,7 @@ defmodule Macrina.Message.Opts.Binary do
   @type payload :: binary()
 
   # these option types are UINTs
-  @unsigned [7, 12, 14, 17, 60]
+  @unsigned [7, 12, 14, 17, 28, 60]
   # block options are their own type
   @block [23, 27]
 
@@ -132,6 +132,4 @@ defmodule Macrina.Message.Opts.Binary do
   def encode_ext(val) when val >= 269, do: {14, <<val - 269::size(16)>>}
   def encode_ext(val) when val >= 13, do: {13, <<val - 13>>}
   def encode_ext(val), do: {val, <<>>}
-
-  defp log2(size), do: :math.log(size) / :math.log(2)
 end

@@ -14,6 +14,7 @@ defmodule Macrina.Message.Opts do
     {20, "Location-Query"},
     {23, "Block2"},
     {27, "Block1"},
+    {28, "Size2"},
     {35, "Proxy-Uri"},
     {39, "Proxy-Scheme"},
     {60, "Size1"}
