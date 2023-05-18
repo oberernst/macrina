@@ -16,6 +16,7 @@ defmodule Macrina.Codes do
   def parse(2, 1), do: :created
   def parse(2, 2), do: :deleted
   def parse(2, 3), do: :valid
+  def parse(2, 31), do: :continue
   def parse(2, 4), do: :changed
   def parse(2, 5), do: :content
   def parse(4, 0), do: :bad_request
@@ -25,6 +26,7 @@ defmodule Macrina.Codes do
   def parse(4, 4), do: :not_found
   def parse(4, 5), do: :method_not_allowed
   def parse(4, 6), do: :not_acceptable
+  def parse(4, 8), do: :request_entity_incomplete
   def parse(4, 12), do: :precondition_failed
   def parse(4, 13), do: :request_entity_too_large
   def parse(4, 15), do: :unsupported_content_format
