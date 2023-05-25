@@ -1,6 +1,6 @@
 defmodule Macrina.Codes do
   @method_codes ~w(empty get post put delete)a
-  @response_codes ~w(created deleted valid continue changed content bad_request unauthorized bad_option forbidden not_found method_not_allowed not_acceptable precondition_failed request_entity_too_large unsupported_content_format internal_server_error not_implemented bad_gateway service_unavailable gateway_timeout  proxying_not_supported)a
+  @response_codes ~w(request_entity_incomplete created deleted valid continue changed content bad_request unauthorized bad_option forbidden not_found method_not_allowed not_acceptable precondition_failed request_entity_too_large unsupported_content_format internal_server_error not_implemented bad_gateway service_unavailable gateway_timeout  proxying_not_supported)a
 
   def method_codes, do: @method_codes
   def response_codes, do: @response_codes
@@ -61,6 +61,7 @@ defmodule Macrina.Codes do
   def parse(:not_found), do: {4, 4}
   def parse(:method_not_allowed), do: {4, 5}
   def parse(:not_acceptable), do: {4, 6}
+  def parse(:request_entity_incomplete), do: {4, 8}
   def parse(:precondition_failed), do: {4, 12}
   def parse(:request_entity_too_large), do: {4, 13}
   def parse(:unsupported_content_format), do: {4, 15}
