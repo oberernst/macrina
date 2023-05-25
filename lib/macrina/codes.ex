@@ -51,6 +51,7 @@ defmodule Macrina.Codes do
   def parse(:created), do: {2, 1}
   def parse(:deleted), do: {2, 2}
   def parse(:valid), do: {2, 3}
+  def parse(:continue), do: {2, 31}
   def parse(:changed), do: {2, 4}
   def parse(:content), do: {2, 5}
   def parse(:bad_request), do: {4, 0}
