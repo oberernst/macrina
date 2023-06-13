@@ -48,6 +48,7 @@ defmodule Macrina.Connection do
     %__MODULE__{state | tokens: [token | tokens]}
   end
 
+  @spec read_blocks(t()) :: String.t() | nil
   def read_blocks(%__MODULE__{blocks: blocks} = state) do
     sorted = Enum.sort_by(blocks, &elem(&1, 0), :asc)
 

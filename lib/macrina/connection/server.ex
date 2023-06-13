@@ -68,7 +68,7 @@ defmodule Macrina.Connection.Server do
       # - if the upload *is* complete, send the application's response and reset blocks
       # - finally, always reply to any clients that may have been waiting for this message
       {:ok, %Message{descriptive_block: %Block{more: false}} = message} ->
-        payload = read_blocks(state)
+        payload = state |> push_block(message) |> read_blocks()
 
         state =
           cond do
