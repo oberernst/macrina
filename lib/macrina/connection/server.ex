@@ -14,6 +14,7 @@ defmodule Macrina.Connection.Server do
     name = Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
 
     state = %Connection{
+      blocks: %{},
       callers: [],
       handler: handler,
       ids: [],
