@@ -169,6 +169,6 @@ defmodule Macrina.Connection.Server do
     )
 
     Connection.reply(state, bin)
-    set_last_reply(state, message.token, bin)
+    state
   end
 end
