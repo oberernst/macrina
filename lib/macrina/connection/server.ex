@@ -18,6 +18,7 @@ defmodule Macrina.Connection.Server do
       handler: handler,
       ids: [],
       ip: ip,
+      last_reply: {nil, nil},
       port: port,
       tokens: [],
       socket: socket
