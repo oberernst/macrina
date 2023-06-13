@@ -1,6 +1,6 @@
 defmodule Macrina.Connection.Server do
   use GenServer
-  alias Macrina.{Connection, Message}
+  alias Macrina.{Connection, Message, Message.Opts.Block}
   import Connection, only: :functions
   require Logger
 
@@ -48,8 +48,63 @@ defmodule Macrina.Connection.Server do
      |> push_token(message)}
   end
 
-  def handle_info({:coap, packet}, %Connection{} = state) do
+  def handle_info({:coap, packet}, %Connection{last_reply: {last_token, reply}} = state) do
     case Message.decode(packet) do
+      # a multi-part upload is ongoing, add the block to existing block map,
+      # reply to the remote client, then pass this message to any local clients
+      # who may be waiting for it
+      {:ok, %Message{descriptive_block: %Block{more: true}} = message} ->
+        {:noreply,
+         state
+         |> push_block(message)
+         |> handle(message, :continue)
+         |> reply_to_client(message)}
+
+      # a multi-part upload is supposedly finished:
+      # - if we already replied to this message, send that
+      # - if the upload is incomplete, send `:request_entity_incomplete` response and reset blocks
+      # - if the upload *is* complete, send the application's response and reset blocks
+      # - finally, always reply to any clients that may have been waiting for this message
+      {:ok, %Message{descriptive_block: %Block{more: false}} = message} ->
+        payload = read_blocks(state)
+
+        state =
+          cond do
+            message.token == last_token ->
+              if reply, do: Connection.reply(state, reply)
+              reply_to_client(state, message)
+
+            is_nil(payload) ->
+              bin =
+                message
+                |> Message.response(code: :request_entity_incomplete, type: :ack)
+                |> Message.encode()
+
+              Connection.reply(state, bin)
+
+              state
+              |> set_last_reply(message.token, bin)
+              |> reset_blocks()
+              |> reply_to_client(message)
+
+            true ->
+              full_message = %Message{message | payload: payload}
+
+              state
+              |> handle(full_message)
+              |> reset_blocks()
+              |> reply_to_client(full_message)
+          end
+
+        {:noreply, state}
+
+      # a single-datagram message was received but its token was already
+      # replied to, so resend the cached reply
+      {:ok, %Message{token: token} = message} when token == last_token ->
+        if reply, do: Connection.reply(state, reply)
+        reply_to_client(state, message)
+        {:noreply, state}
+
       {:ok, %Message{type: type} = message} when type in [:ack, :res] ->
         {:noreply,
          state
@@ -59,14 +114,10 @@ defmodule Macrina.Connection.Server do
          |> pop_token(message)}
 
       {:ok, %Message{} = message} ->
-        {:noreply,
-         state
-         |> handle(message)
-         |> reply_to_client(message)}
+        {:noreply, state |> handle(message) |> reply_to_client(message)}
 
       _ ->
         Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
-        handle(state, packet)
         {:noreply, state}
     end
   end
@@ -82,8 +133,40 @@ defmodule Macrina.Connection.Server do
     pop_caller(state, caller)
   end
 
-  defp handle(%Connection{} = state, message_or_packet) do
-    state.handler.call(state, message_or_packet)
-    state
+  defp handle(%Connection{} = state, message) do
+    if reply = state.handler.call(state, message) do
+      bin = Message.encode(reply)
+
+      Logger.info("#{__MODULE__}.handle/2 encoding and replying",
+        conn: inspect(state),
+        request: inspect(message),
+        response: %{encoded: Base.encode64(bin), raw: reply}
+      )
+
+      Connection.reply(state, bin)
+      set_last_reply(state, message.token, bin)
+    else
+      Logger.info("#{__MODULE__}.handle/2 did not reply",
+        conn: inspect(state),
+        request: inspect(message)
+      )
+
+      set_last_reply(state, message.token, nil)
+    end
+  end
+
+  defp handle(%Connection{} = state, message, :continue) do
+    bin =
+      message
+      |> Message.response(code: :continue, type: :ack)
+      |> Message.encode()
+
+    Logger.info("#{__MODULE__}.handle/3 continuing",
+      conn: inspect(state),
+      request: inspect(message)
+    )
+
+    Connection.reply(state, bin)
+    set_last_reply(state, message.token, bin)
   end
 end
