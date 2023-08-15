@@ -36,7 +36,7 @@ defmodule Macrina.Connection.Server do
 
   def init(state) do
     Logger.info("Macrina connection started", state: inspect(state))
-    {:ok, state}
+    {:ok, state, :timer.minutes(1)}
   end
 
   def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
