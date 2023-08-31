@@ -1,8 +1,10 @@
 defmodule Macrina.Connection.Server do
-  use GenServer
+  use GenServer, restart: :transient
   alias Macrina.{Connection, Message, Message.Opts.Block}
   import Connection, only: :functions
   require Logger
+
+  @timeout :timer.minutes(5)
 
   # ------------------------------------------- Client ------------------------------------------- #
 
@@ -36,7 +38,7 @@ defmodule Macrina.Connection.Server do
 
   def init(state) do
     Logger.info("Macrina connection started", state: inspect(state))
-    {:ok, state, :timer.minutes(5)}
+    {:ok, state, @timeout}
   end
 
   def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
@@ -47,7 +49,7 @@ defmodule Macrina.Connection.Server do
      state
      |> push_caller({message.token, from})
      |> push_id(message)
-     |> push_token(message)}
+     |> push_token(message), @timeout}
   end
 
   def handle_info({:coap, packet}, %Connection{last_reply: {last_token, reply}} = state) do
@@ -60,7 +62,7 @@ defmodule Macrina.Connection.Server do
          state
          |> push_block(message)
          |> handle(message, :continue)
-         |> reply_to_client(message)}
+         |> reply_to_client(message), @timeout}
 
       # a multi-part upload is supposedly finished:
       # - if we already replied to this message, send that
@@ -98,14 +100,14 @@ defmodule Macrina.Connection.Server do
               |> reply_to_client(full_message)
           end
 
-        {:noreply, state}
+        {:noreply, state, @timeout}
 
       # a single-datagram message was received but its token was already
       # replied to, so resend the cached reply
       {:ok, %Message{token: token} = message} when token == last_token ->
         if reply, do: Connection.reply(state, reply)
         reply_to_client(state, message)
-        {:noreply, state}
+        {:noreply, state, @timeout}
 
       {:ok, %Message{type: type} = message} when type in [:ack, :res] ->
         {:noreply,
@@ -113,15 +115,23 @@ defmodule Macrina.Connection.Server do
          |> handle(message)
          |> reply_to_client(message)
          |> pop_id(message)
-         |> pop_token(message)}
+         |> pop_token(message), @timeout}
 
       {:ok, %Message{} = message} ->
-        {:noreply, state |> handle(message) |> reply_to_client(message)}
+        {:noreply, state |> handle(message) |> reply_to_client(message), @timeout}
 
       _ ->
         Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
-        {:noreply, state}
+        {:noreply, state, @timeout}
     end
+  end
+
+  def handle_info(:timeout, state) do
+    {:stop, :normal, state}
+  end
+
+  def terminate(:normal, state) do
+    Logger.info("Connection server shutting down", server: Macrina.conn_name(state.ip, state.port))
   end
 
   defp reply_to_client(%Connection{callers: callers} = state, message) do
