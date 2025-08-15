@@ -6,6 +6,7 @@ defmodule Macrina.Codes do
   def response_codes, do: @response_codes
 
   # Method Codes
+  @spec parse(integer(), integer()) :: atom()
   def parse(0, 0), do: :empty
   def parse(0, 1), do: :get
   def parse(0, 2), do: :post
@@ -40,6 +41,7 @@ defmodule Macrina.Codes do
   def parse(c, dd), do: raise("unassigned code: #{c}, #{dd}")
 
   # Method Codes
+  @spec parse(atom()) :: {integer(), integer()}
   def parse(:empty), do: {0, 0}
   def parse(:get), do: {0, 1}
   def parse(:post), do: {0, 2}
