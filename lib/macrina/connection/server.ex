@@ -58,6 +58,11 @@ defmodule Macrina.Connection.Server do
       # reply to the remote client, then pass this message to any local clients
       # who may be waiting for it
       {:ok, %Message{descriptive_block: %Block{more: true}} = message} ->
+        Logger.info("#{__MODULE__}.handle_info/2 continuing block transfer",
+          conn: inspect(state),
+          request: inspect(message)
+        )
+
         {:noreply,
          state
          |> push_block(message)
@@ -75,10 +80,22 @@ defmodule Macrina.Connection.Server do
         state =
           cond do
             message.token == last_token ->
+              Logger.info(
+                "#{__MODULE__}.handle_info/2 resending cached reply for completed block transfer",
+                conn: inspect(state),
+                request: inspect(message)
+              )
+
               if reply, do: Connection.reply(state, reply)
               reply_to_client(state, message)
 
             is_nil(payload) ->
+              Logger.info(
+                "#{__MODULE__}.handle_info/2 incomplete block transfer",
+                conn: inspect(state),
+                request: inspect(message)
+              )
+
               bin =
                 message
                 |> Message.response(code: :request_entity_incomplete, type: :ack)
@@ -93,6 +110,12 @@ defmodule Macrina.Connection.Server do
 
             true ->
               full_message = %Message{message | payload: payload}
+
+              Logger.info(
+                "#{__MODULE__}.handle_info/2 completed block transfer",
+                conn: inspect(state),
+                request: inspect(full_message)
+              )
 
               state
               |> handle(full_message)
