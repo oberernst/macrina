@@ -2,6 +2,8 @@
 
 Saint Macrina, patron of Robotics, ora pro nobis
 ---
+Planning for the next major rewrite lives in [docs/1.0-release-plan.md](docs/1.0-release-plan.md).
+
 UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constantly. LMK if you'd like this to change
 * CoAP binary request encoding and decoding (RFC 7253.3)
 * CoAP Block Transfers (RFC 7959)

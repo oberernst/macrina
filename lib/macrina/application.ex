@@ -4,7 +4,7 @@ defmodule Macrina.Application do
   @moduledoc false
 
   use Application
-  require Logger
+  alias Macrina.Telemetry
 
   @impl true
   def start(_type, _args) do
@@ -18,7 +18,7 @@ defmodule Macrina.Application do
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Macrina.Supervisor]
     res = Supervisor.start_link(children, opts)
-    Logger.info("macrina started", result: inspect(res))
+    Telemetry.execute([:app, :start], %{system_time: System.system_time()}, %{result: res})
     res
   end
 end
