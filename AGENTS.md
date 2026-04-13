@@ -13,6 +13,7 @@ These instructions guide GitHub Copilot and similar AI agents to work productive
 
 ## Style & Conventions
 - **Aliases:** Always use aliases; never reference modules with full paths in code.
+- **Blocks:** Prefer `do ... end` over `, do:` forms. A single-line `, do:` form is acceptable when it fits on one line, but `do ... end` must always be preferred if the `, do:` version would span 2 lines.
 - **Unit tests:** Every function you write or alter must have a unit test. Use straightforward, in-place tests—avoid helpers unless necessary.
 - **Test gold standard:** See `test/reactmobile_web/v5/beacon_controller_test.exs` for idiomatic test style: minimal helpers, terse but thorough comments, and Mox for mocking.
 - **Documentation:** Prefer literate code with extensive comments. Assume high reader sophistication.

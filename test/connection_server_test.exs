@@ -8,7 +8,9 @@ defmodule Macrina.ConnectionServerTest do
   end
 
   defmodule TestHandler do
-    def call(_connection, _message), do: nil
+    def call(_connection, _message) do
+      nil
+    end
   end
 
   test "start_link returns a missing option error" do

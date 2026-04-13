@@ -3,7 +3,9 @@ defmodule Macrina.Client do
 
   defstruct [:conn, :ip, :port]
 
-  def connect(opts) when is_list(opts), do: new(opts)
+  def connect(opts) when is_list(opts) do
+    new(opts)
+  end
 
   def connect!(opts) when is_list(opts) do
     case connect(opts) do
@@ -65,29 +67,33 @@ defmodule Macrina.Client do
     request_uri(client, :get, uri, type: :con)
   end
 
-  def get!(%__MODULE__{} = client, uri) when is_binary(uri),
-    do: request!(client, Request.from_uri!(:get, uri, type: :con))
+  def get!(%__MODULE__{} = client, uri) when is_binary(uri) do
+    request!(client, Request.from_uri!(:get, uri, type: :con))
+  end
 
   def post(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
     request_uri(client, :post, uri, payload: payload, type: :con)
   end
 
-  def post!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri),
-    do: request!(client, Request.from_uri!(:post, uri, payload: payload, type: :con))
+  def post!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
+    request!(client, Request.from_uri!(:post, uri, payload: payload, type: :con))
+  end
 
   def put(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
     request_uri(client, :put, uri, payload: payload, type: :con)
   end
 
-  def put!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri),
-    do: request!(client, Request.from_uri!(:put, uri, payload: payload, type: :con))
+  def put!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
+    request!(client, Request.from_uri!(:put, uri, payload: payload, type: :con))
+  end
 
   def delete(%__MODULE__{} = client, uri) when is_binary(uri) do
     request_uri(client, :delete, uri, type: :con)
   end
 
-  def delete!(%__MODULE__{} = client, uri) when is_binary(uri),
-    do: request!(client, Request.from_uri!(:delete, uri, type: :con))
+  def delete!(%__MODULE__{} = client, uri) when is_binary(uri) do
+    request!(client, Request.from_uri!(:delete, uri, type: :con))
+  end
 
   defp request_uri(client, method, uri, opts) do
     with {:ok, request} <- Request.from_uri(method, uri, opts) do
@@ -119,10 +125,13 @@ defmodule Macrina.Client do
     end
   end
 
-  defp telemetry_result_metadata({:ok, response}),
-    do: %{code: response.code, status: :ok, type: response.type}
+  defp telemetry_result_metadata({:ok, response}) do
+    %{code: response.code, status: :ok, type: response.type}
+  end
 
-  defp telemetry_result_metadata({:error, reason}), do: %{error: reason, status: :error}
+  defp telemetry_result_metadata({:error, reason}) do
+    %{error: reason, status: :error}
+  end
 
   defp fetch_opt(opts, key) do
     case Keyword.fetch(opts, key) do

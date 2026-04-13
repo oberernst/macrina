@@ -82,9 +82,17 @@ defmodule Macrina.Message.Opts.Binary do
   end
 
   @spec decode_block(binary()) :: Block.t()
-  def decode_block(<<num::4, m::1, szx::3>>), do: decode_block(num, m, szx)
-  def decode_block(<<num::12, m::1, szx::3>>), do: decode_block(num, m, szx)
-  def decode_block(<<num::28, m::1, szx::3>>), do: decode_block(num, m, szx)
+  def decode_block(<<num::4, m::1, szx::3>>) do
+    decode_block(num, m, szx)
+  end
+
+  def decode_block(<<num::12, m::1, szx::3>>) do
+    decode_block(num, m, szx)
+  end
+
+  def decode_block(<<num::28, m::1, szx::3>>) do
+    decode_block(num, m, szx)
+  end
 
   @spec decode_block(integer(), integer(), integer()) :: Block.t()
   def decode_block(num, m, szx) do
@@ -181,7 +189,13 @@ defmodule Macrina.Message.Opts.Binary do
   end
 
   def encode_block(num, more?, size) do
-    m = if more?, do: 1, else: 0
+    m =
+      if more? do
+        1
+      else
+        0
+      end
+
     szx = (size |> :math.log2() |> Float.ceil() |> trunc()) - 4
 
     cond do
@@ -202,9 +216,17 @@ defmodule Macrina.Message.Opts.Binary do
     {:error, {:invalid_option, option}}
   end
 
-  def encode_ext(val) when val >= 269, do: {14, <<val - 269::size(16)>>}
-  def encode_ext(val) when val >= 13, do: {13, <<val - 13>>}
-  def encode_ext(val), do: {val, <<>>}
+  def encode_ext(val) when val >= 269 do
+    {14, <<val - 269::size(16)>>}
+  end
+
+  def encode_ext(val) when val >= 13 do
+    {13, <<val - 13>>}
+  end
+
+  def encode_ext(val) do
+    {val, <<>>}
+  end
 
   defp next_options(options, _option_number, <<0>>) do
     options
@@ -314,7 +336,9 @@ defmodule Macrina.Message.Opts.Binary do
     size in [16, 32, 64, 128, 256, 512, 1024]
   end
 
-  defp valid_block_size?(_size), do: false
+  defp valid_block_size?(_size) do
+    false
+  end
 
   defp sort_encoded_option({{number, _value}, index}) do
     {number, index}

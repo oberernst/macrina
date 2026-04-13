@@ -1,11 +1,9 @@
 defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
-  alias Macrina.{Connection, Handler, Message, Message.Opts.Block, Telemetry}
+  alias Macrina.{Connection, Exchange, Handler, Message, Message.Opts.Block, Telemetry}
   import Connection, only: :functions
 
   @timeout :timer.minutes(5)
-
-  # ------------------------------------------- Client ------------------------------------------- #
 
   def start_link(args) do
     with {:ok, handler} <- fetch_opt(args, :handler),
@@ -23,8 +21,6 @@ defmodule Macrina.Connection.Server do
     GenServer.call(pid, {:request, message}, timeout)
   end
 
-  # ------------------------------------------- Server ------------------------------------------- #
-
   def init(state) do
     execute_connection_event(state, [:start], %{system_time: System.system_time()}, %{})
     {:ok, state, @timeout}
@@ -33,7 +29,7 @@ defmodule Macrina.Connection.Server do
   def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
     case Message.encode(message) do
       {:ok, packet} ->
-        next_state = request_state(state, message, from)
+        next_state = register_request(state, message, from)
 
         :gen_udp.send(state.socket, {state.ip, state.port}, packet)
 
@@ -77,55 +73,31 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle(%Connection{} = state, message) do
-    if reply = Handler.call(state.handler, state, message) do
-      case Message.encode(reply) do
-        {:ok, bin} ->
-          send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
-          set_last_reply(state, message.token, bin)
+    case Handler.call(state.handler, state, message) do
+      nil ->
+        execute_connection_event(state, [:reply, :skipped], %{count: 1}, %{stage: :handler})
+        clear_last_reply(state, message.token)
 
-        {:error, reason} ->
-          execute_connection_event(state, [:reply, :encode, :error], %{count: 1}, %{
-            error: reason,
-            stage: :handler
-          })
+      reply ->
+        case encoded_reply(reply) do
+          {:ok, bin} ->
+            send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
+            set_last_reply(state, message.token, bin)
 
-          set_last_reply(state, message.token, nil)
-      end
-    else
-      execute_connection_event(state, [:reply, :skipped], %{count: 1}, %{stage: :handler})
-
-      set_last_reply(state, message.token, nil)
+          {:error, reason} ->
+            emit_reply_error(state, :encode, :handler, reason)
+            clear_last_reply(state, message.token)
+        end
     end
   end
 
   defp handle(%Connection{} = state, message, :continue) do
-    case Message.response(message, code: :continue, type: :ack) do
-      {:ok, continue_message} ->
-        case Message.encode(continue_message) do
-          {:ok, bin} ->
-            send_reply(state, bin, %{
-              code: continue_message.code,
-              stage: :continue,
-              type: continue_message.type
-            })
+    case send_built_reply(state, message, [code: :continue, type: :ack], %{stage: :continue}) do
+      {:ok, _reply, _bin} ->
+        state
 
-            state
-
-          {:error, reason} ->
-            execute_connection_event(state, [:reply, :encode, :error], %{count: 1}, %{
-              error: reason,
-              stage: :continue
-            })
-
-            state
-        end
-
-      {:error, reason} ->
-        execute_connection_event(state, [:reply, :build, :error], %{count: 1}, %{
-          error: reason,
-          stage: :continue
-        })
-
+      {:error, step, reason} ->
+        emit_reply_error(state, step, :continue, reason)
         state
     end
   end
@@ -136,7 +108,7 @@ defmodule Macrina.Connection.Server do
          _last_token,
          _reply
        ) do
-    log_continue(state, message)
+    emit_block_continue(state, message)
 
     state
     |> push_block(message)
@@ -180,13 +152,15 @@ defmodule Macrina.Connection.Server do
   end
 
   defp completed_block_state(state, message, payload, last_token, reply) do
+    # A final block can mean a duplicate replay, an incomplete transfer, or a
+    # newly completed request body. Keep those branches explicit and ordered.
     cond do
       message.token == last_token ->
-        log_resend_completed(state, message)
+        emit_reply_resent(state, message)
         resend_cached_reply(state, reply, message)
 
       is_nil(payload) ->
-        log_incomplete_transfer(state, message)
+        emit_incomplete_transfer(state, message)
         reply_incomplete_transfer(state, message)
 
       true ->
@@ -207,50 +181,25 @@ defmodule Macrina.Connection.Server do
   end
 
   defp reply_incomplete_transfer(state, message) do
-    case incomplete_transfer_reply(message) do
-      {:ok, reply} ->
-        case Message.encode(reply) do
-          {:ok, encoded_reply} ->
-            send_reply(state, encoded_reply, %{
-              code: reply.code,
-              stage: :incomplete_transfer,
-              type: reply.type
-            })
+    case send_built_reply(
+           state,
+           message,
+           [code: :request_entity_incomplete, type: :ack],
+           %{stage: :incomplete_transfer}
+         ) do
+      {:ok, _reply, encoded_reply} ->
+        state
+        |> set_last_reply(message.token, encoded_reply)
+        |> reset_blocks()
+        |> reply_to_client(message)
 
-            state
-            |> set_last_reply(message.token, encoded_reply)
-            |> reset_blocks()
-            |> reply_to_client(message)
-
-          {:error, reason} ->
-            execute_connection_event(
-              state,
-              [:reply, :encode, :error],
-              %{count: 1},
-              %{error: reason, stage: :incomplete_transfer}
-            )
-
-            state
-            |> reset_blocks()
-            |> reply_to_client(message)
-        end
-
-      {:error, reason} ->
-        execute_connection_event(
-          state,
-          [:reply, :build, :error],
-          %{count: 1},
-          %{error: reason, stage: :incomplete_transfer}
-        )
+      {:error, step, reason} ->
+        emit_reply_error(state, step, :incomplete_transfer, reason)
 
         state
         |> reset_blocks()
         |> reply_to_client(message)
     end
-  end
-
-  defp incomplete_transfer_reply(message) do
-    Message.response(message, code: :request_entity_incomplete, type: :ack)
   end
 
   defp resend_cached_reply(state, reply, message) do
@@ -261,17 +210,13 @@ defmodule Macrina.Connection.Server do
     reply_to_client(state, message)
   end
 
-  defp request_state(state, message, from) do
-    register_request(state, message, from)
-  end
-
   defp connection_name(args, ip, port) do
     Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
   end
 
   defp connection_state(handler, ip, port, socket) do
     %Connection{
-      exchange: %Macrina.Exchange{},
+      exchange: %Exchange{},
       handler: handler,
       ip: ip,
       port: port,
@@ -279,7 +224,7 @@ defmodule Macrina.Connection.Server do
     }
   end
 
-  defp log_continue(state, message) do
+  defp emit_block_continue(state, message) do
     measurements = %{
       block_number: message.descriptive_block.number,
       block_size: message.descriptive_block.size,
@@ -291,18 +236,57 @@ defmodule Macrina.Connection.Server do
     execute_connection_event(state, [:block, :continue], measurements, metadata)
   end
 
-  defp log_resend_completed(state, message) do
+  defp emit_reply_resent(state, message) do
     measurements = %{count: 1}
     metadata = %{code: message.code, stage: :completed_transfer, type: message.type}
 
     execute_connection_event(state, [:reply, :resent], measurements, metadata)
   end
 
-  defp log_incomplete_transfer(state, message) do
+  defp emit_incomplete_transfer(state, message) do
     measurements = %{count: 1}
     metadata = %{code: message.code, type: message.type}
 
     execute_connection_event(state, [:block, :incomplete], measurements, metadata)
+  end
+
+  defp emit_reply_error(state, step, stage, reason) do
+    execute_connection_event(state, [:reply, step, :error], %{count: 1}, %{
+      error: reason,
+      stage: stage
+    })
+  end
+
+  defp send_built_reply(state, message, reply_opts, metadata) do
+    with {:ok, reply} <- build_reply(message, reply_opts),
+         {:ok, encoded_reply} <- encoded_reply(reply) do
+      reply_metadata =
+        metadata
+        |> Map.put(:code, reply.code)
+        |> Map.put(:type, reply.type)
+
+      send_reply(state, encoded_reply, reply_metadata)
+
+      {:ok, reply, encoded_reply}
+    end
+  end
+
+  defp build_reply(message, reply_opts) do
+    case Message.response(message, reply_opts) do
+      {:ok, reply} -> {:ok, reply}
+      {:error, reason} -> {:error, :build, reason}
+    end
+  end
+
+  defp encoded_reply(reply) do
+    case Message.encode(reply) do
+      {:ok, encoded_reply} -> {:ok, encoded_reply}
+      {:error, reason} -> {:error, :encode, reason}
+    end
+  end
+
+  defp clear_last_reply(state, token) do
+    set_last_reply(state, token, nil)
   end
 
   defp send_reply(state, bin, metadata) do

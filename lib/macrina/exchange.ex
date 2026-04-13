@@ -1,4 +1,12 @@
 defmodule Macrina.Exchange do
+  @moduledoc """
+  Pure protocol state for a single peer exchange lifecycle.
+
+  `Macrina.Connection.Server` owns socket orchestration; this module owns the
+  token, message-id, caller, cached-reply, and blockwise tracking that sits
+  behind that shell.
+  """
+
   alias Macrina.{Message, Message.Opts.Block, Telemetry}
 
   defstruct blocks: %{}, callers: [], ids: [], last_reply: {nil, nil}, tokens: []
@@ -22,7 +30,7 @@ defmodule Macrina.Exchange do
   end
 
   def pop_caller_for_token(%__MODULE__{} = exchange, token) when is_binary(token) do
-    caller = caller(exchange, token)
+    caller = caller_for_token(exchange, token)
     next_exchange = pop_caller(exchange, caller)
 
     {caller, next_exchange}
@@ -73,28 +81,16 @@ defmodule Macrina.Exchange do
 
   @spec read_blocks(t()) :: String.t() | nil
   def read_blocks(%__MODULE__{blocks: blocks}) do
-    sorted = Enum.sort_by(blocks, &elem(&1, 0), :asc)
+    sorted_blocks = Enum.sort_by(blocks, &elem(&1, 0), :asc)
 
-    {missing, valid?} =
-      Enum.reduce_while(sorted, {-1, true}, fn {num, _}, {last_num, _} ->
-        if last_num + 1 == num do
-          {:cont, {num, true}}
-        else
-          {:halt, {num - 1, false}}
-        end
-      end)
+    # Blockwise assembly only makes sense once we have a contiguous 0..n set.
+    case contiguous_blocks(sorted_blocks) do
+      :ok ->
+        assemble_blocks(sorted_blocks)
 
-    if valid? do
-      payload = Enum.reduce(sorted, "", fn {_, str}, acc -> acc <> str end)
-      emit_assembled_blocks(length(sorted), payload, sorted)
-      payload
-    else
-      measurements = %{count: 1}
-      metadata = %{missing_block: missing, received_blocks: length(sorted)}
-
-      Telemetry.execute([:connection, :block, :missing], measurements, metadata)
-
-      nil
+      {:error, missing_block} ->
+        emit_missing_block(missing_block, sorted_blocks)
+        nil
     end
   end
 
@@ -111,8 +107,40 @@ defmodule Macrina.Exchange do
     last_reply
   end
 
-  def caller(%__MODULE__{callers: callers}, token) when is_binary(token) do
+  defp caller_for_token(%__MODULE__{callers: callers}, token) when is_binary(token) do
     Enum.find(callers, fn {caller_token, _from} -> caller_token == token end)
+  end
+
+  defp contiguous_blocks(sorted_blocks) do
+    case Enum.reduce_while(sorted_blocks, {-1, true}, &contiguous_block_result/2) do
+      {_last_block, true} -> :ok
+      {missing_block, false} -> {:error, missing_block}
+    end
+  end
+
+  defp contiguous_block_result({block_number, _payload}, {last_block, _valid?}) do
+    if last_block + 1 == block_number do
+      {:cont, {block_number, true}}
+    else
+      {:halt, {block_number - 1, false}}
+    end
+  end
+
+  defp assemble_blocks(sorted_blocks) do
+    payload = Enum.reduce(sorted_blocks, "", &append_block_payload/2)
+    emit_assembled_blocks(length(sorted_blocks), payload, sorted_blocks)
+    payload
+  end
+
+  defp append_block_payload({_block_number, payload}, acc) do
+    acc <> payload
+  end
+
+  defp emit_missing_block(missing_block, sorted_blocks) do
+    measurements = %{count: 1}
+    metadata = %{missing_block: missing_block, received_blocks: length(sorted_blocks)}
+
+    Telemetry.execute([:connection, :block, :missing], measurements, metadata)
   end
 
   defp emit_assembled_blocks(count, payload, sorted) do
@@ -124,10 +152,17 @@ defmodule Macrina.Exchange do
     Telemetry.execute([:connection, :block, :assembled], measurements, metadata)
   end
 
-  defp first_block([]), do: nil
-  defp first_block([{first, _payload} | _sorted]), do: first
+  defp first_block([]) do
+    nil
+  end
 
-  defp last_block([]), do: nil
+  defp first_block([{first, _payload} | _sorted]) do
+    first
+  end
+
+  defp last_block([]) do
+    nil
+  end
 
   defp last_block(sorted) do
     {last, _payload} = List.last(sorted)
