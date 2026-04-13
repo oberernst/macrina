@@ -2,6 +2,9 @@ defmodule Macrina.Connection do
   alias Macrina.{Exchange, Handler, Message}
 
   defstruct ack_timeout: 2_000,
+            block1_max_body_size: :infinity,
+            block1_mode: :atomic,
+            block1_preferred_block_size: nil,
             exchange: %Exchange{},
             exchange_lifetime: 247_000,
             handler: nil,
@@ -14,6 +17,9 @@ defmodule Macrina.Connection do
 
   @type t :: %__MODULE__{
           ack_timeout: non_neg_integer(),
+          block1_max_body_size: non_neg_integer() | :infinity,
+          block1_mode: :atomic | :streaming,
+          block1_preferred_block_size: pos_integer() | nil,
           exchange: Exchange.t(),
           exchange_lifetime: non_neg_integer(),
           handler: Handler.t(),
@@ -50,6 +56,13 @@ defmodule Macrina.Connection do
     update_exchange(state, &Exchange.push_block(&1, message))
   end
 
+  def store_block(%__MODULE__{exchange: exchange} = state, %Message{} = message) do
+    case Exchange.store_block(exchange, message) do
+      {:ok, next_exchange} -> {:ok, put_exchange(state, next_exchange)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def push_caller(%__MODULE__{} = state, caller) do
     update_exchange(state, &Exchange.push_caller(&1, caller))
   end
@@ -73,9 +86,14 @@ defmodule Macrina.Connection do
     update_exchange(state, &Exchange.track_request(&1, message, from, packet, max_retransmit))
   end
 
-  @spec read_blocks(t()) :: String.t() | nil
-  def read_blocks(%__MODULE__{exchange: exchange}) do
-    Exchange.read_blocks(exchange)
+  @spec read_blocks(t(), Message.t()) :: String.t() | nil
+  def read_blocks(%__MODULE__{exchange: exchange}, %Message{} = message) do
+    Exchange.read_blocks(exchange, message)
+  end
+
+  @spec block_transfer(t(), Message.t()) :: {:ok, map()} | :error
+  def block_transfer(%__MODULE__{exchange: exchange}, %Message{} = message) do
+    Exchange.block_transfer(exchange, message)
   end
 
   @spec reply(t(), binary()) :: :ok | {:error, term()}
@@ -85,6 +103,10 @@ defmodule Macrina.Connection do
 
   def reset_blocks(%__MODULE__{} = state) do
     update_exchange(state, &Exchange.reset_blocks/1)
+  end
+
+  def reset_blocks(%__MODULE__{} = state, %Message{} = message) do
+    update_exchange(state, &Exchange.reset_blocks(&1, message))
   end
 
   @spec cache_reply(t(), Message.t(), binary() | nil) :: t()

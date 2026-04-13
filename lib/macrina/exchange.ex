@@ -7,7 +7,7 @@ defmodule Macrina.Exchange do
   behind that shell.
   """
 
-  alias Macrina.{Message, Message.Opts.Block, Telemetry}
+  alias Macrina.{Blockwise, Message, Message.Opts.Block, Telemetry}
 
   @type reply_entry :: %{reply: binary() | nil, stored_at: integer()}
 
@@ -24,7 +24,7 @@ defmodule Macrina.Exchange do
         }
 
   @type t :: %__MODULE__{
-          blocks: %{optional(non_neg_integer()) => binary()},
+          blocks: %{optional(Blockwise.transfer_key()) => Blockwise.transfer()},
           callers: [{binary(), tuple()}],
           ids: [non_neg_integer()],
           replies: %{optional(non_neg_integer()) => reply_entry()},
@@ -57,18 +57,29 @@ defmodule Macrina.Exchange do
     %__MODULE__{exchange | tokens: List.delete(tokens, token)}
   end
 
-  def push_block(%__MODULE__{blocks: blocks} = exchange, %Message{
-        descriptive_block: %Block{number: num, size: size, more: more},
-        payload: payload
-      }) do
-    next_blocks = Map.put(blocks, num, payload)
+  def push_block(%__MODULE__{} = exchange, %Message{} = message) do
+    case store_block(exchange, message) do
+      {:ok, next_exchange} -> next_exchange
+      {:error, _reason} -> exchange
+    end
+  end
 
-    measurements = %{block_number: num, block_size: size, bytes: byte_size(payload)}
-    metadata = %{more: more}
+  @spec store_block(t(), Message.t()) :: {:ok, t()} | {:error, atom()}
+  def store_block(
+        %__MODULE__{blocks: blocks} = exchange,
+        %Message{
+          descriptive_block: %Block{number: num, size: size, more: more},
+          payload: payload
+        } = message
+      ) do
+    with {:ok, next_blocks} <- Blockwise.put_transfer(blocks, message) do
+      measurements = %{block_number: num, block_size: size, bytes: byte_size(payload)}
+      metadata = %{more: more}
 
-    Telemetry.execute([:connection, :block, :received], measurements, metadata)
+      Telemetry.execute([:connection, :block, :received], measurements, metadata)
 
-    %__MODULE__{exchange | blocks: next_blocks}
+      {:ok, %__MODULE__{exchange | blocks: next_blocks}}
+    end
   end
 
   def push_caller(%__MODULE__{callers: callers} = exchange, caller) do
@@ -114,23 +125,34 @@ defmodule Macrina.Exchange do
     %__MODULE__{exchange | requests: Map.put(requests, message.token, request)}
   end
 
-  @spec read_blocks(t()) :: String.t() | nil
-  def read_blocks(%__MODULE__{blocks: blocks}) do
-    sorted_blocks = Enum.sort_by(blocks, &elem(&1, 0), :asc)
+  @spec read_blocks(t(), Message.t()) :: String.t() | nil
+  def read_blocks(%__MODULE__{blocks: blocks}, %Message{} = message) do
+    case Blockwise.assemble(blocks, message) do
+      {:ok, payload, %{count: count, first_block: first, last_block: last}} ->
+        emit_assembled_blocks(count, payload, first, last)
+        payload
 
-    # Blockwise assembly only makes sense once we have a contiguous 0..n set.
-    case contiguous_blocks(sorted_blocks) do
-      :ok ->
-        assemble_blocks(sorted_blocks)
+      {:error, :missing_block, %{missing_block: missing_block, received_blocks: count}} ->
+        emit_missing_block(missing_block, count)
+        nil
 
-      {:error, missing_block} ->
-        emit_missing_block(missing_block, sorted_blocks)
+      :error ->
         nil
     end
   end
 
+  @spec block_transfer(t(), Message.t()) :: {:ok, Blockwise.transfer()} | :error
+  def block_transfer(%__MODULE__{blocks: blocks}, %Message{} = message) do
+    Blockwise.transfer(blocks, message)
+  end
+
   def reset_blocks(%__MODULE__{} = exchange) do
     %__MODULE__{exchange | blocks: %{}}
+  end
+
+  def reset_blocks(%__MODULE__{blocks: blocks} = exchange, %Message{} = message) do
+    next_blocks = Blockwise.delete_transfer(blocks, message)
+    %__MODULE__{exchange | blocks: next_blocks}
   end
 
   @spec cache_reply(t(), Message.t(), binary() | nil) :: t()
@@ -266,61 +288,17 @@ defmodule Macrina.Exchange do
     now - stored_at >= lifetime
   end
 
-  defp contiguous_blocks(sorted_blocks) do
-    case Enum.reduce_while(sorted_blocks, {-1, true}, &contiguous_block_result/2) do
-      {_last_block, true} -> :ok
-      {missing_block, false} -> {:error, missing_block}
-    end
-  end
-
-  defp contiguous_block_result({block_number, _payload}, {last_block, _valid?}) do
-    if last_block + 1 == block_number do
-      {:cont, {block_number, true}}
-    else
-      {:halt, {block_number - 1, false}}
-    end
-  end
-
-  defp assemble_blocks(sorted_blocks) do
-    payload = Enum.reduce(sorted_blocks, "", &append_block_payload/2)
-    emit_assembled_blocks(length(sorted_blocks), payload, sorted_blocks)
-    payload
-  end
-
-  defp append_block_payload({_block_number, payload}, acc) do
-    acc <> payload
-  end
-
-  defp emit_missing_block(missing_block, sorted_blocks) do
+  defp emit_missing_block(missing_block, received_blocks) do
     measurements = %{count: 1}
-    metadata = %{missing_block: missing_block, received_blocks: length(sorted_blocks)}
+    metadata = %{missing_block: missing_block, received_blocks: received_blocks}
 
     Telemetry.execute([:connection, :block, :missing], measurements, metadata)
   end
 
-  defp emit_assembled_blocks(count, payload, sorted) do
-    first = first_block(sorted)
-    last = last_block(sorted)
+  defp emit_assembled_blocks(count, payload, first, last) do
     measurements = %{bytes: byte_size(payload), count: count}
     metadata = %{first_block: first, last_block: last}
 
     Telemetry.execute([:connection, :block, :assembled], measurements, metadata)
-  end
-
-  defp first_block([]) do
-    nil
-  end
-
-  defp first_block([{first, _payload} | _sorted]) do
-    first
-  end
-
-  defp last_block([]) do
-    nil
-  end
-
-  defp last_block(sorted) do
-    {last, _payload} = List.last(sorted)
-    last
   end
 end

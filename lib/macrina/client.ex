@@ -1,5 +1,14 @@
 defmodule Macrina.Client do
-  alias Macrina.{Connection.Server, Endpoint, Request, Response, Telemetry}
+  alias Macrina.{
+    Blockwise,
+    Connection.Server,
+    Endpoint,
+    Message,
+    Message.Opts.Block,
+    Request,
+    Response,
+    Telemetry
+  }
 
   defstruct [:conn, :ip, :port]
 
@@ -103,10 +112,75 @@ defmodule Macrina.Client do
 
   defp do_request(pid, request) do
     with {:ok, message} <- Request.to_message(request),
-         {:ok, response_message} <- call_server(pid, message) do
-      response = Response.from_message(response_message)
+         {:ok, response_message} <- call_server(pid, message),
+         {:ok, final_response_message} <-
+           maybe_collect_block2(pid, request, response_message, %{}) do
+      response = Response.from_message(final_response_message)
       {:ok, response}
     end
+  end
+
+  defp maybe_collect_block2(pid, %Request{} = request, %Message{} = response_message, transfers) do
+    if is_nil(Request.block2(request)) do
+      maybe_collect_implicit_block2(pid, request, response_message, transfers)
+    else
+      {:ok, response_message}
+    end
+  end
+
+  defp maybe_collect_implicit_block2(
+         _pid,
+         _request,
+         %Message{descriptive_block: nil} = response_message,
+         _transfers
+       ) do
+    {:ok, response_message}
+  end
+
+  defp maybe_collect_implicit_block2(
+         pid,
+         request,
+         %Message{descriptive_block: %Block{more: more}} = response_message,
+         transfers
+       ) do
+    with {:ok, next_transfers} <- Blockwise.put_transfer(transfers, response_message) do
+      if more do
+        next_request = next_block2_request(request, response_message)
+
+        with {:ok, next_message} <- Request.to_message(next_request),
+             {:ok, next_response_message} <- call_server(pid, next_message) do
+          maybe_collect_block2(pid, request, next_response_message, next_transfers)
+        end
+      else
+        finalize_block2_response(next_transfers, response_message)
+      end
+    else
+      {:error, reason} -> {:error, {:invalid_block2_response, reason}}
+    end
+  end
+
+  defp finalize_block2_response(transfers, response_message) do
+    case Blockwise.assemble(transfers, response_message) do
+      {:ok, payload, _metadata} ->
+        {:ok, %{response_message | payload: payload}}
+
+      {:error, :missing_block, _metadata} ->
+        {:error, {:invalid_block2_response, :missing_block}}
+
+      :error ->
+        {:error, {:invalid_block2_response, :missing_block}}
+    end
+  end
+
+  defp next_block2_request(%Request{} = request, %{
+         descriptive_block: %Block{} = block,
+         token: token
+       }) do
+    next_block = %Block{number: block.number + 1, more: false, size: block.size}
+
+    request
+    |> Request.put_block2(next_block)
+    |> then(fn next_request -> %Request{next_request | id: nil, token: token} end)
   end
 
   defp call_server(pid, message) do

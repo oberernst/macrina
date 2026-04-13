@@ -1,7 +1,7 @@
 defmodule Macrina.ConnectionServerTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Connection.Server, Message}
+  alias Macrina.{Block1.Chunk, Connection.Server, Message, Message.Opts.Block}
 
   defmodule CountingHandler do
     def call(_connection, message) do
@@ -22,6 +22,23 @@ defmodule Macrina.ConnectionServerTest do
   end
 
   defmodule TestHandler do
+    def call(_connection, _message) do
+      nil
+    end
+  end
+
+  defmodule StreamingHandler do
+    def call(_connection, %Chunk{} = chunk) do
+      pid = :persistent_term.get({__MODULE__, :test_pid})
+      send(pid, {:stream_chunk, chunk.complete, chunk.bytes, chunk.message.payload})
+
+      if chunk.complete do
+        Message.response!(chunk.message, code: :changed, type: :ack)
+      else
+        nil
+      end
+    end
+
     def call(_connection, _message) do
       nil
     end
@@ -513,6 +530,221 @@ defmodule Macrina.ConnectionServerTest do
 
     assert {:error, :timeout} = :gen_udp.recv(recv_socket, 0, 60)
     assert Task.await(task) == {:error, :request_reset}
+
+    GenServer.stop(pid)
+    :gen_udp.close(send_socket)
+    :gen_udp.close(recv_socket)
+  end
+
+  test "block1 continue replies acknowledge the block and negotiate a preferred size" do
+    {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
+    name = {:global, {Server, make_ref()}}
+
+    assert {:ok, pid} =
+             Server.start_link(
+               block1_preferred_block_size: 32,
+               handler: TestHandler,
+               ip: {127, 0, 0, 1},
+               port: recv_port,
+               socket: send_socket,
+               name: name
+             )
+
+    block = %Block{number: 0, more: true, size: 64}
+
+    request =
+      Message.build!(:put,
+        id: 501,
+        options: [{"Block1", block}, {"Content-Format", 0}],
+        payload: String.duplicate("a", 64),
+        token: <<5, 0, 1, 0>>,
+        type: :con
+      )
+
+    {:ok, packet} = Message.encode(request)
+    send(pid, {:coap, packet})
+
+    assert {:ok, {_ip, _port, reply_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, reply_message} = Message.decode(reply_packet)
+
+    assert reply_message.code == :continue
+    assert reply_message.type == :ack
+    assert reply_message.control_block == %Block{number: 0, more: false, size: 32}
+
+    GenServer.stop(pid)
+    :gen_udp.close(send_socket)
+    :gen_udp.close(recv_socket)
+  end
+
+  test "oversized block1 uploads return request entity too large" do
+    {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
+    name = {:global, {Server, make_ref()}}
+
+    assert {:ok, pid} =
+             Server.start_link(
+               block1_max_body_size: 64,
+               handler: TestHandler,
+               ip: {127, 0, 0, 1},
+               port: recv_port,
+               socket: send_socket,
+               name: name
+             )
+
+    first_request =
+      Message.build!(:put,
+        id: 502,
+        options: [{"Block1", %Block{number: 0, more: true, size: 64}}, {"Content-Format", 0}],
+        payload: String.duplicate("a", 64),
+        token: <<5, 0, 2, 0>>,
+        type: :con
+      )
+
+    second_request =
+      Message.build!(:put,
+        id: 503,
+        options: [{"Block1", %Block{number: 1, more: false, size: 64}}, {"Content-Format", 0}],
+        payload: "b",
+        token: <<5, 0, 2, 0>>,
+        type: :con
+      )
+
+    {:ok, first_packet} = Message.encode(first_request)
+    send(pid, {:coap, first_packet})
+
+    assert {:ok, {_ip, _port, continue_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, continue_message} = Message.decode(continue_packet)
+    assert continue_message.code == :continue
+
+    {:ok, second_packet} = Message.encode(second_request)
+    send(pid, {:coap, second_packet})
+
+    assert {:ok, {_ip, _port, reply_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, reply_message} = Message.decode(reply_packet)
+
+    assert reply_message.code == :request_entity_too_large
+    assert reply_message.type == :ack
+    assert reply_message.control_block == %Block{number: 1, more: false, size: 64}
+
+    GenServer.stop(pid)
+    :gen_udp.close(send_socket)
+    :gen_udp.close(recv_socket)
+  end
+
+  test "out-of-sequence block1 uploads return request entity incomplete with block state" do
+    {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
+    name = {:global, {Server, make_ref()}}
+
+    assert {:ok, pid} =
+             Server.start_link(
+               handler: TestHandler,
+               ip: {127, 0, 0, 1},
+               port: recv_port,
+               socket: send_socket,
+               name: name
+             )
+
+    first_request =
+      Message.build!(:put,
+        id: 504,
+        options: [{"Block1", %Block{number: 0, more: true, size: 32}}, {"Content-Format", 0}],
+        payload: String.duplicate("a", 32),
+        token: <<5, 0, 4, 0>>,
+        type: :con
+      )
+
+    skipped_request =
+      Message.build!(:put,
+        id: 505,
+        options: [{"Block1", %Block{number: 2, more: false, size: 32}}, {"Content-Format", 0}],
+        payload: String.duplicate("b", 8),
+        token: <<5, 0, 4, 0>>,
+        type: :con
+      )
+
+    {:ok, first_packet} = Message.encode(first_request)
+    send(pid, {:coap, first_packet})
+    assert {:ok, {_ip, _port, _continue_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+
+    {:ok, skipped_packet} = Message.encode(skipped_request)
+    send(pid, {:coap, skipped_packet})
+
+    assert {:ok, {_ip, _port, reply_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, reply_message} = Message.decode(reply_packet)
+
+    assert reply_message.code == :request_entity_incomplete
+    assert reply_message.type == :ack
+    assert reply_message.control_block == %Block{number: 2, more: false, size: 32}
+
+    GenServer.stop(pid)
+    :gen_udp.close(send_socket)
+    :gen_udp.close(recv_socket)
+  end
+
+  test "streaming block1 mode delivers chunks before upload completion" do
+    :persistent_term.put({StreamingHandler, :test_pid}, self())
+
+    on_exit(fn ->
+      :persistent_term.erase({StreamingHandler, :test_pid})
+    end)
+
+    {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
+    {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
+    name = {:global, {Server, make_ref()}}
+
+    assert {:ok, pid} =
+             Server.start_link(
+               block1_mode: :streaming,
+               handler: StreamingHandler,
+               ip: {127, 0, 0, 1},
+               port: recv_port,
+               socket: send_socket,
+               name: name
+             )
+
+    first_request =
+      Message.build!(:put,
+        id: 506,
+        options: [{"Block1", %Block{number: 0, more: true, size: 32}}, {"Content-Format", 0}],
+        payload: String.duplicate("a", 32),
+        token: <<5, 0, 6, 0>>,
+        type: :con
+      )
+
+    second_request =
+      Message.build!(:put,
+        id: 507,
+        options: [{"Block1", %Block{number: 1, more: false, size: 32}}, {"Content-Format", 0}],
+        payload: "done",
+        token: <<5, 0, 6, 0>>,
+        type: :con
+      )
+
+    {:ok, first_packet} = Message.encode(first_request)
+    send(pid, {:coap, first_packet})
+
+    assert_receive {:stream_chunk, false, 32, first_payload}
+    assert first_payload == String.duplicate("a", 32)
+
+    assert {:ok, {_ip, _port, continue_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, continue_message} = Message.decode(continue_packet)
+    assert continue_message.code == :continue
+
+    {:ok, second_packet} = Message.encode(second_request)
+    send(pid, {:coap, second_packet})
+
+    assert_receive {:stream_chunk, true, 36, "done"}
+
+    assert {:ok, {_ip, _port, reply_packet}} = :gen_udp.recv(recv_socket, 0, 200)
+    assert {:ok, reply_message} = Message.decode(reply_packet)
+    assert reply_message.code == :changed
+    assert reply_message.type == :ack
 
     GenServer.stop(pid)
     :gen_udp.close(send_socket)

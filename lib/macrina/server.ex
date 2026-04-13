@@ -1,5 +1,5 @@
 defmodule Macrina.Server do
-  alias Macrina.Endpoint
+  alias Macrina.{Block1, Endpoint, Router}
 
   def start_link(opts) when is_list(opts) do
     with {:ok, endpoint_opts} <- build_endpoint_opts(opts) do
@@ -21,13 +21,16 @@ defmodule Macrina.Server do
 
     cond do
       handler ->
-        endpoint_opts = endpoint_opts(opts, handler)
-        {:ok, endpoint_opts}
+        opts
+        |> endpoint_opts(handler)
+        |> normalize_block1_opts(:handler)
 
       router ->
         router_handler = {:router, router, context}
-        endpoint_opts = endpoint_opts(opts, router_handler)
-        {:ok, endpoint_opts}
+
+        opts
+        |> endpoint_opts(router_handler)
+        |> normalize_block1_opts({:router, router})
 
       true ->
         {:error, {:missing_option, :handler}}
@@ -39,5 +42,46 @@ defmodule Macrina.Server do
     |> Keyword.put(:handler, handler)
     |> Keyword.delete(:router)
     |> Keyword.delete(:context)
+  end
+
+  defp normalize_block1_opts(opts, handler_type) do
+    if Keyword.has_key?(opts, :block1) do
+      with :ok <- ensure_no_raw_block1_conflict(opts),
+           {:ok, policy} <- Block1.new(Keyword.fetch!(opts, :block1)),
+           :ok <- ensure_supported_block1_mode(policy, handler_type) do
+        endpoint_opts =
+          opts
+          |> Keyword.delete(:block1)
+          |> Keyword.merge(Block1.to_connection_opts(policy))
+
+        {:ok, endpoint_opts}
+      else
+        {:error, reason} -> {:error, {:invalid_block1, reason}}
+      end
+    else
+      {:ok, opts}
+    end
+  end
+
+  defp ensure_supported_block1_mode(%Block1{mode: :streaming}, {:router, router}) do
+    if Router.supports_block1_streaming?(router) do
+      :ok
+    else
+      {:error, :streaming_requires_block1_callback}
+    end
+  end
+
+  defp ensure_supported_block1_mode(%Block1{}, _handler_type) do
+    :ok
+  end
+
+  defp ensure_no_raw_block1_conflict(opts) do
+    raw_keys = [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
+
+    if Enum.any?(raw_keys, &Keyword.has_key?(opts, &1)) do
+      {:error, :conflicting_options}
+    else
+      :ok
+    end
   end
 end

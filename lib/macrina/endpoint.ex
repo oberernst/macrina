@@ -1,16 +1,22 @@
 defmodule Macrina.Endpoint do
   use GenServer
-  alias Macrina.{Connection.Server, ConnectionSupervisor, Telemetry}
+  alias Macrina.{Block1, Connection.Server, ConnectionSupervisor, Router, Telemetry}
 
-  defstruct [:handler, :socket]
+  @connection_option_keys [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
+
+  defstruct [:handler, :socket, connection_opts: []]
 
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
   def start_link(args) do
-    with {:ok, handler} <- fetch_opt(args, :handler),
-         {:ok, port} <- fetch_opt(args, :port) do
+    with {:ok, normalized_args} <- normalize_block1_opts(args),
+         {:ok, handler} <- fetch_opt(normalized_args, :handler),
+         {:ok, port} <- fetch_opt(normalized_args, :port) do
       name = Keyword.get(args, :name, __MODULE__)
-      GenServer.start_link(__MODULE__, {handler, port}, name: name)
+      init_args = Keyword.put(normalized_args, :handler, handler)
+      init_args = Keyword.put(init_args, :port, port)
+
+      GenServer.start_link(__MODULE__, init_args, name: name)
     end
   end
 
@@ -24,12 +30,21 @@ defmodule Macrina.Endpoint do
     end
   end
 
-  def init({handler, port}) do
+  def init(args) do
+    handler = Keyword.fetch!(args, :handler)
+    port = Keyword.fetch!(args, :port)
+
     case :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}]) do
       {:ok, socket} ->
         Telemetry.execute([:endpoint, :start], %{system_time: System.system_time()}, %{port: port})
 
-        {:ok, %__MODULE__{handler: handler, socket: socket}}
+        state = %__MODULE__{
+          connection_opts: Keyword.take(args, @connection_option_keys),
+          handler: handler,
+          socket: socket
+        }
+
+        {:ok, state}
 
       {:error, reason} ->
         {:stop, reason}
@@ -61,7 +76,12 @@ defmodule Macrina.Endpoint do
 
   def handle_info({:udp, socket, ip, port, packet}, state) do
     conn_name = Macrina.conn_name(ip, port)
-    init_args = {Server, handler: state.handler, ip: ip, port: port, socket: socket}
+
+    child_args =
+      [handler: state.handler, ip: ip, port: port, socket: socket]
+      |> Keyword.merge(state.connection_opts)
+
+    init_args = {Server, child_args}
 
     Telemetry.execute(
       [:endpoint, :packet, :received],
@@ -92,6 +112,47 @@ defmodule Macrina.Endpoint do
       {:ok, value} -> {:ok, value}
       :error -> {:error, {:missing_option, key}}
     end
+  end
+
+  defp normalize_block1_opts(args) do
+    if Keyword.has_key?(args, :block1) do
+      with :ok <- ensure_no_raw_block1_conflict(args),
+           {:ok, policy} <- Block1.new(Keyword.fetch!(args, :block1)),
+           :ok <- ensure_supported_block1_mode(policy, Keyword.get(args, :handler)) do
+        normalized_args =
+          args
+          |> Keyword.delete(:block1)
+          |> Keyword.merge(Block1.to_connection_opts(policy))
+
+        {:ok, normalized_args}
+      else
+        {:error, reason} -> {:error, {:invalid_block1, reason}}
+      end
+    else
+      {:ok, args}
+    end
+  end
+
+  defp ensure_no_raw_block1_conflict(args) do
+    raw_keys = [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
+
+    if Enum.any?(raw_keys, &Keyword.has_key?(args, &1)) do
+      {:error, :conflicting_options}
+    else
+      :ok
+    end
+  end
+
+  defp ensure_supported_block1_mode(%Block1{mode: :streaming}, {:router, router, _context}) do
+    if Router.supports_block1_streaming?(router) do
+      :ok
+    else
+      {:error, :streaming_requires_block1_callback}
+    end
+  end
+
+  defp ensure_supported_block1_mode(%Block1{}, _handler) do
+    :ok
   end
 
   defp safe_call(endpoint, message) do

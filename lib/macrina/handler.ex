@@ -1,15 +1,23 @@
 defmodule Macrina.Handler do
-  alias Macrina.{Connection, Message, Request, Response, Telemetry}
+  alias Macrina.{Block1.Chunk, Connection, Message, Request, Response, Telemetry}
 
   @type t :: module() | {:router, module(), map()}
 
-  @callback call(Connection.t(), Message.t() | binary()) :: Message.t() | nil
+  @callback call(Connection.t(), Message.t() | Chunk.t() | binary()) :: Message.t() | nil
 
   def call(handler, %Connection{} = connection, %Message{} = message) do
     case handler do
       {:router, router, context} -> call_router(router, context, connection, message)
       module when is_atom(module) -> module.call(connection, message)
     end
+  end
+
+  def call({:router, router, context}, %Connection{} = connection, %Chunk{} = chunk) do
+    call_router_block1(router, context, connection, chunk)
+  end
+
+  def call(module, %Connection{} = connection, %Chunk{} = chunk) when is_atom(module) do
+    module.call(connection, chunk)
   end
 
   defp call_router(router, context, connection, message) do
@@ -23,6 +31,19 @@ defmodule Macrina.Handler do
     else
       nil -> nil
       {:error, reason} -> router_error_response(router, message, reason)
+    end
+  end
+
+  defp call_router_block1(router, context, connection, chunk) do
+    peer = %{ip: connection.ip, port: connection.port}
+    router_context = Map.merge(context, %{connection: connection, peer: peer})
+
+    with %Response{} = response <- router.block1(chunk, router_context),
+         {:ok, reply} <- Response.to_message(response, chunk.message) do
+      reply
+    else
+      nil -> nil
+      {:error, reason} -> router_error_response(router, chunk.message, reason)
     end
   end
 

@@ -1,7 +1,7 @@
 defmodule Macrina.ExchangeTest do
   use ExUnit.Case, async: true
 
-  alias Macrina.{Exchange, Message}
+  alias Macrina.{Blockwise, Exchange, Message, Message.Opts.Block}
 
   test "exchange tracks ids and tokens" do
     exchange = %Exchange{}
@@ -149,5 +149,72 @@ defmodule Macrina.ExchangeTest do
     assert timed_out_request.id == 20
     assert timed_out_request.state == :awaiting_response
     assert Exchange.pending_request(timed_out_exchange, message.token) == :error
+  end
+
+  test "exchange stores block transfers independently by token" do
+    first = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 0, more: false, size: 16},
+      payload: "one",
+      token: <<1>>
+    }
+
+    second = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 0, more: false, size: 16},
+      payload: "two",
+      token: <<2>>
+    }
+
+    {:ok, exchange} = Exchange.store_block(%Exchange{}, first)
+    {:ok, exchange} = Exchange.store_block(exchange, second)
+
+    first_key = Blockwise.transfer_key(first)
+    second_key = Blockwise.transfer_key(second)
+
+    assert exchange.blocks[first_key].blocks == %{0 => "one"}
+    assert exchange.blocks[second_key].blocks == %{0 => "two"}
+  end
+
+  test "exchange rejects out-of-sequence block transfers" do
+    first = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 0, more: true, size: 16},
+      payload: "part-1",
+      token: <<3>>
+    }
+
+    third = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 2, more: false, size: 16},
+      payload: "part-3",
+      token: <<3>>
+    }
+
+    {:ok, exchange} = Exchange.store_block(%Exchange{}, first)
+
+    assert {:error, :out_of_sequence} = Exchange.store_block(exchange, third)
+  end
+
+  test "exchange rejects content format changes within a transfer" do
+    first = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 0, more: true, size: 16},
+      options: [{"Content-Format", 0}],
+      payload: "part-1",
+      token: <<4>>
+    }
+
+    second = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 1, more: false, size: 16},
+      options: [{"Content-Format", 50}],
+      payload: "part-2",
+      token: <<4>>
+    }
+
+    {:ok, exchange} = Exchange.store_block(%Exchange{}, first)
+
+    assert {:error, :content_format_mismatch} = Exchange.store_block(exchange, second)
   end
 end

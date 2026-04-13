@@ -1,13 +1,13 @@
 defmodule Macrina.ConnectionTest do
   use ExUnit.Case, async: true
 
-  alias Macrina.{Connection, Exchange, Message, Message.Opts.Block}
+  alias Macrina.{Blockwise, Connection, Exchange, Message, Message.Opts.Block}
 
   def telemetry_handler(event, measurements, metadata, pid) do
     send(pid, {event, measurements, metadata})
   end
 
-  test "push_block and read_blocks emit received and assembled telemetry" do
+  test "store_block and read_blocks emit received and assembled telemetry" do
     handler_id = "connection-block-events-#{System.unique_integer([:positive])}"
     test_pid = self()
 
@@ -31,12 +31,12 @@ defmodule Macrina.ConnectionTest do
       payload: "hello"
     }
 
-    next_state = Connection.push_block(state, message)
+    assert {:ok, next_state} = Connection.store_block(state, message)
 
     assert_receive {[:macrina, :connection, :block, :received],
                     %{block_number: 0, block_size: 16, bytes: 5}, %{more: false}}
 
-    assert Connection.read_blocks(next_state) == "hello"
+    assert Connection.read_blocks(next_state, message) == "hello"
 
     assert_receive {[:macrina, :connection, :block, :assembled], %{bytes: 5, count: 1},
                     %{first_block: 0, last_block: 0}}
@@ -56,10 +56,29 @@ defmodule Macrina.ConnectionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    exchange = %Exchange{blocks: %{0 => "ab", 2 => "cd"}}
+    message = %Message{
+      code: :put,
+      descriptive_block: %Block{number: 0, more: true, size: 16},
+      token: <<1>>
+    }
+
+    key = Blockwise.transfer_key(message)
+
+    exchange = %Exchange{
+      blocks: %{
+        key => %{
+          blocks: %{0 => "ab", 2 => "cd"},
+          bytes: 4,
+          content_format: nil,
+          next_block: 3,
+          size: 16
+        }
+      }
+    }
+
     state = %Connection{exchange: exchange}
 
-    assert Connection.read_blocks(state) == nil
+    assert Connection.read_blocks(state, message) == nil
 
     assert_receive {[:macrina, :connection, :block, :missing], %{count: 1},
                     %{missing_block: 1, received_blocks: 2}}
