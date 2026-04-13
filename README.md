@@ -13,6 +13,40 @@ UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constant
 
 ## Overview
 
+## Public API
+
+### Request and Response helpers
+
+The public request and response structs now expose typed helpers for common CoAP
+options instead of forcing raw option numbers into application code.
+
+```elixir
+request =
+  Macrina.Request.new(:get,
+    accept: :application_json,
+    observe: 0,
+    block2: %Macrina.Message.Opts.Block{number: 0, more: false, size: 64}
+  )
+
+Macrina.Request.accept(request)
+# => :application_json
+
+response =
+  Macrina.Response.new(:content,
+    content_format: :application_json,
+    max_age: 60,
+    location_path: ["devices", "alpha"],
+    location_query: ["expand=true"]
+  )
+
+Macrina.Response.location_path(response)
+# => ["devices", "alpha"]
+```
+
+`Macrina.ContentFormat` provides the current content-format mapping used by
+those helpers. Unknown integer content-format values are preserved so the public
+API can stay forward-compatible with newer registry entries.
+
 ### `Macrina.Endpoint`
 A thin `GenServer` wrapper around `:gen_udp`. Given an IP and port, any incoming UDP packets at that port will be sent to the `Endpoint`. This is done via `GenServer`'s built-in `handle_info` functionality.
 

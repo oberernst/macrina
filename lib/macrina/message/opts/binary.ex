@@ -39,7 +39,7 @@ defmodule Macrina.Message.Opts.Binary do
           | {:unknown_option, binary()}
 
   # these option types are UINTs
-  @unsigned [7, 12, 14, 17, 28, 60]
+  @unsigned [6, 7, 12, 14, 17, 28, 60]
   # block options are their own type
   @block [23, 27]
 

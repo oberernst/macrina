@@ -1,10 +1,15 @@
 defmodule Macrina.Request do
-  alias Macrina.Message
+  alias Macrina.{ContentFormat, Message, Message.Opts.Block}
 
   @path_option "Uri-Path"
   @query_option "Uri-Query"
   @host_option "Uri-Host"
   @port_option "Uri-Port"
+  @accept_option "Accept"
+  @block1_option "Block1"
+  @block2_option "Block2"
+  @content_format_option "Content-Format"
+  @observe_option "Observe"
 
   @enforce_keys [:method]
   defstruct host: nil,
@@ -37,7 +42,7 @@ defmodule Macrina.Request do
   @type message_error :: {:invalid_request, term()}
 
   def new(method, opts \\ []) when is_atom(method) and is_list(opts) do
-    %__MODULE__{
+    request = %__MODULE__{
       method: method,
       host: Keyword.get(opts, :host),
       id: Keyword.get(opts, :id),
@@ -50,6 +55,13 @@ defmodule Macrina.Request do
       token: Keyword.get(opts, :token),
       type: Keyword.get(opts, :type, :con)
     }
+
+    request
+    |> maybe_put_content_format(Keyword.fetch(opts, :content_format))
+    |> maybe_put_accept(Keyword.fetch(opts, :accept))
+    |> maybe_put_observe(Keyword.fetch(opts, :observe))
+    |> maybe_put_block1(Keyword.fetch(opts, :block1))
+    |> maybe_put_block2(Keyword.fetch(opts, :block2))
   end
 
   def from_uri(method, uri, opts \\ [])
@@ -126,8 +138,55 @@ defmodule Macrina.Request do
     port_options = port_options(request.port, request.scheme)
     path_options = Enum.map(request.path, &{@path_option, &1})
     query_options = Enum.map(request.query, &{@query_option, &1})
+    typed_options = normalize_typed_options(request.options)
 
-    host_options ++ port_options ++ path_options ++ query_options ++ request.options
+    host_options ++ port_options ++ path_options ++ query_options ++ typed_options
+  end
+
+  def content_format(%__MODULE__{options: options}) do
+    decode_content_format_option(option_value(options, @content_format_option))
+  end
+
+  def accept(%__MODULE__{options: options}) do
+    decode_content_format_option(option_value(options, @accept_option))
+  end
+
+  def observe(%__MODULE__{options: options}) do
+    option_value(options, @observe_option)
+  end
+
+  def block1(%__MODULE__{options: options}) do
+    option_value(options, @block1_option)
+  end
+
+  def block2(%__MODULE__{options: options}) do
+    option_value(options, @block2_option)
+  end
+
+  def put_content_format(%__MODULE__{options: options} = request, content_format) do
+    next_options = put_option(options, @content_format_option, content_format)
+    %__MODULE__{request | options: next_options}
+  end
+
+  def put_accept(%__MODULE__{options: options} = request, accept) do
+    next_options = put_option(options, @accept_option, accept)
+    %__MODULE__{request | options: next_options}
+  end
+
+  def put_observe(%__MODULE__{options: options} = request, observe)
+      when is_integer(observe) and observe >= 0 do
+    next_options = put_option(options, @observe_option, observe)
+    %__MODULE__{request | options: next_options}
+  end
+
+  def put_block1(%__MODULE__{options: options} = request, %Block{} = block) do
+    next_options = put_option(options, @block1_option, block)
+    %__MODULE__{request | options: next_options}
+  end
+
+  def put_block2(%__MODULE__{options: options} = request, %Block{} = block) do
+    next_options = put_option(options, @block2_option, block)
+    %__MODULE__{request | options: next_options}
   end
 
   defp uri_request_opts(parsed, scheme, opts) do
@@ -211,4 +270,83 @@ defmodule Macrina.Request do
   defp parse_scheme("coap"), do: {:ok, :coap}
   defp parse_scheme("coaps"), do: {:ok, :coaps}
   defp parse_scheme(scheme), do: {:error, {:unsupported_scheme, scheme}}
+
+  defp maybe_put_content_format(request, {:ok, content_format}) do
+    put_content_format(request, content_format)
+  end
+
+  defp maybe_put_content_format(request, :error) do
+    request
+  end
+
+  defp maybe_put_accept(request, {:ok, accept}) do
+    put_accept(request, accept)
+  end
+
+  defp maybe_put_accept(request, :error) do
+    request
+  end
+
+  defp maybe_put_observe(request, {:ok, observe}) do
+    put_observe(request, observe)
+  end
+
+  defp maybe_put_observe(request, :error) do
+    request
+  end
+
+  defp maybe_put_block1(request, {:ok, %Block{} = block}) do
+    put_block1(request, block)
+  end
+
+  defp maybe_put_block1(request, :error) do
+    request
+  end
+
+  defp maybe_put_block2(request, {:ok, %Block{} = block}) do
+    put_block2(request, block)
+  end
+
+  defp maybe_put_block2(request, :error) do
+    request
+  end
+
+  defp option_value(options, name) do
+    case List.keyfind(options, name, 0) do
+      {^name, value} -> value
+      nil -> nil
+    end
+  end
+
+  defp put_option(options, name, value) do
+    next_options = Enum.reject(options, fn {option_name, _value} -> option_name == name end)
+    next_options ++ [{name, value}]
+  end
+
+  defp normalize_typed_options(options) do
+    Enum.map(options, &normalize_typed_option/1)
+  end
+
+  defp normalize_typed_option({name, value})
+       when name in [@accept_option, @content_format_option] do
+    case ContentFormat.encode(value) do
+      {:ok, encoded_value} -> {name, encoded_value}
+      :error -> {name, value}
+    end
+  end
+
+  defp normalize_typed_option(option) do
+    option
+  end
+
+  defp decode_content_format_option(nil) do
+    nil
+  end
+
+  defp decode_content_format_option(value) do
+    case ContentFormat.decode(value) do
+      {:ok, decoded_value} -> decoded_value
+      :error -> value
+    end
+  end
 end
