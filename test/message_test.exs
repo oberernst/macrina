@@ -5,7 +5,7 @@ defmodule Macrina.MessageTest do
 
   test "build uses provided options directly" do
     options = [{"Uri-Path", "temperature"}, {"Uri-Query", "unit=c"}]
-    message = Message.build(:get, options: options, payload: "", type: :con)
+    assert {:ok, message} = Message.build(:get, options: options, payload: "", type: :con)
 
     assert message.options == options
     assert message.code == :get
@@ -13,8 +13,8 @@ defmodule Macrina.MessageTest do
   end
 
   test "response preserves request id and token" do
-    request = Message.build(:get, id: 11, token: <<1, 2, 3, 4>>, type: :con)
-    response = Message.response(request, code: :content, payload: "ok", type: :ack)
+    assert {:ok, request} = Message.build(:get, id: 11, token: <<1, 2, 3, 4>>, type: :con)
+    assert {:ok, response} = Message.response(request, code: :content, payload: "ok", type: :ack)
 
     assert response.id == 11
     assert response.token == <<1, 2, 3, 4>>
@@ -23,13 +23,20 @@ defmodule Macrina.MessageTest do
   end
 
   test "response slices blockwise payloads" do
-    control_block = %Block{number: 1, more: false, size: 4}
-    request = Message.build(:get, id: 22, token: <<9, 9, 9, 9>>, control_block: control_block)
+    control_block = %Block{number: 1, more: false, size: 16}
 
-    response = Message.response(request, code: :content, payload: "abcdefgh", type: :ack)
+    assert {:ok, request} =
+             Message.build(:get, id: 22, token: <<9, 9, 9, 9>>, control_block: control_block)
 
-    assert response.payload == "efgh"
-    assert {"Block2", %Block{number: 1, more: false, size: 4}} in response.options
+    assert {:ok, response} =
+             Message.response(request,
+               code: :content,
+               payload: "abcdefghijklmnopqrstuvwx",
+               type: :ack
+             )
+
+    assert response.payload == "qrstuvwx"
+    assert {"Block2", %Block{number: 1, more: false, size: 16}} in response.options
   end
 
   test "decode rejects token lengths above eight bytes" do
@@ -51,14 +58,17 @@ defmodule Macrina.MessageTest do
   end
 
   test "encode normalizes empty messages to legal empty acks" do
-    message = Message.build(:empty, id: 77, payload: "ignored", token: <<1, 2, 3>>, type: :non)
+    assert {:ok, message} =
+             Message.build(:empty, id: 77, payload: "ignored", token: <<1, 2, 3>>, type: :non)
 
     assert {:ok, encoded_message} = Message.encode(message)
     assert encoded_message == <<1::2, 2::2, 0::4, 0::3, 0::5, 77::16>>
   end
 
   test "encode omits the payload marker for empty payloads" do
-    message = Message.build(:get, id: 88, payload: <<>>, token: <<1, 2, 3, 4>>, type: :con)
+    assert {:ok, message} =
+             Message.build(:get, id: 88, payload: <<>>, token: <<1, 2, 3, 4>>, type: :con)
+
     assert {:ok, packet} = Message.encode(message)
 
     assert Message.decode(packet) == {:ok, message}
@@ -66,42 +76,62 @@ defmodule Macrina.MessageTest do
 
   test "encode preserves option order for repeated option numbers" do
     options = [{"Uri-Path", "api"}, {"Uri-Path", "v1"}, {"Uri-Path", "status"}]
-    message = Message.build(:get, id: 89, options: options, token: <<1, 2, 3, 4>>, type: :con)
+
+    assert {:ok, message} =
+             Message.build(:get, id: 89, options: options, token: <<1, 2, 3, 4>>, type: :con)
 
     assert {:ok, packet} = Message.encode(message)
     assert {:ok, decoded_message} = Message.decode(packet)
     assert decoded_message.options == options
   end
 
-  test "encode rejects token lengths above eight bytes" do
-    message = Message.build(:get, id: 99, token: <<1, 2, 3, 4, 5, 6, 7, 8, 9>>, type: :con)
+  test "build rejects invalid codes" do
+    assert Message.build(:bogus) == {:error, :invalid_code}
+  end
 
-    assert Message.encode(message) == {:error, :invalid_token_length}
+  test "build rejects invalid options" do
+    assert Message.build(:get, options: [{"Unknown-Option", "value"}]) ==
+             {:error, {:invalid_options, {:unknown_option, "Unknown-Option"}}}
+  end
+
+  test "response rejects invalid payloads" do
+    assert {:ok, request} = Message.build(:get, id: 90, token: <<1, 2, 3, 4>>, type: :con)
+
+    assert Message.response(request, code: :content, payload: %{bad: true}, type: :ack) ==
+             {:error, :invalid_payload}
+  end
+
+  test "encode rejects token lengths above eight bytes" do
+    message = Message.build!(:get, id: 99, token: <<1, 2, 3, 4>>, type: :con)
+    bad_message = %Message{message | token: <<1, 2, 3, 4, 5, 6, 7, 8, 9>>}
+
+    assert Message.encode(bad_message) == {:error, :invalid_token_length}
   end
 
   test "encode rejects unknown options" do
-    message = Message.build(:get, id: 100, options: [{"Unknown-Option", "value"}], type: :con)
+    message = Message.build!(:get, id: 100, type: :con)
+    bad_message = %Message{message | options: [{"Unknown-Option", "value"}]}
 
-    assert Message.encode(message) ==
+    assert Message.encode(bad_message) ==
              {:error, {:invalid_options, {:unknown_option, "Unknown-Option"}}}
   end
 
   test "encode rejects invalid option values" do
-    message =
-      Message.build(:get, id: 101, options: [{"Content-Format", "text/plain"}], type: :con)
+    message = Message.build!(:get, id: 101, type: :con)
+    bad_message = %Message{message | options: [{"Content-Format", "text/plain"}]}
 
-    assert Message.encode(message) ==
+    assert Message.encode(bad_message) ==
              {:error, {:invalid_options, {:invalid_option_value, "Content-Format", "text/plain"}}}
   end
 
   test "encode rejects invalid types" do
-    message = %Message{Message.build(:get, id: 102, type: :con) | type: :invalid}
+    message = %Message{Message.build!(:get, id: 102, type: :con) | type: :invalid}
 
     assert Message.encode(message) == {:error, :invalid_type}
   end
 
   test "encode rejects invalid payloads" do
-    message = %Message{Message.build(:get, id: 103, type: :con) | payload: %{value: 1}}
+    message = %Message{Message.build!(:get, id: 103, type: :con) | payload: %{value: 1}}
 
     assert Message.encode(message) == {:error, :invalid_payload}
   end

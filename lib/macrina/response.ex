@@ -1,5 +1,5 @@
 defmodule Macrina.Response do
-  alias Macrina.{Codes, Message}
+  alias Macrina.Message
 
   defstruct [:code, :control_block, :descriptive_block, :id, :options, :payload, :token, :type]
 
@@ -41,35 +41,39 @@ defmodule Macrina.Response do
   end
 
   def to_message(%__MODULE__{} = response, %Message{} = request_message) do
-    if Codes.valid_code?(response.code) do
-      message =
-        Message.response(request_message,
-          code: response.code,
-          options: response.options,
-          payload: response.payload,
-          type: response.type
-        )
+    case Message.response(request_message,
+           code: response.code,
+           options: response.options,
+           payload: response.payload,
+           type: response.type
+         ) do
+      {:ok, message} ->
+        {:ok, message}
 
-      {:ok, message}
-    else
-      {:error, {:invalid_response, {:unsupported_code, response.code}}}
+      {:error, :invalid_code} ->
+        {:error, {:invalid_response, {:unsupported_code, response.code}}}
+
+      {:error, reason} ->
+        {:error, {:invalid_response, reason}}
     end
   end
 
   def to_message(%__MODULE__{} = response, nil) do
-    if Codes.valid_code?(response.code) do
-      message =
-        Message.build(response.code,
-          id: response.id,
-          options: response.options,
-          payload: response.payload,
-          token: response.token,
-          type: response.type
-        )
+    case Message.build(response.code,
+           id: response.id,
+           options: response.options,
+           payload: response.payload,
+           token: response.token,
+           type: response.type
+         ) do
+      {:ok, message} ->
+        {:ok, message}
 
-      {:ok, message}
-    else
-      {:error, {:invalid_response, {:unsupported_code, response.code}}}
+      {:error, :invalid_code} ->
+        {:error, {:invalid_response, {:unsupported_code, response.code}}}
+
+      {:error, reason} ->
+        {:error, {:invalid_response, reason}}
     end
   end
 

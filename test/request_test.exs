@@ -32,7 +32,9 @@ defmodule Macrina.RequestTest do
   end
 
   test "response converts from messages" do
-    message = Message.build(:content, payload: "ok", options: [{"Content-Format", 0}], type: :ack)
+    assert {:ok, message} =
+             Message.build(:content, payload: "ok", options: [{"Content-Format", 0}], type: :ack)
+
     response = Response.from_message(message)
 
     assert response.code == :content
@@ -71,7 +73,7 @@ defmodule Macrina.RequestTest do
   end
 
   test "response converts back to a coap message using request correlation data" do
-    request_message = Message.build(:get, id: 10, token: <<1, 2, 3, 4>>, type: :con)
+    assert {:ok, request_message} = Message.build(:get, id: 10, token: <<1, 2, 3, 4>>, type: :con)
     response = Response.new(:content, payload: "ok", options: [{"Content-Format", 0}], type: :ack)
 
     assert {:ok, reply_message} = Response.to_message(response, request_message)
@@ -87,10 +89,22 @@ defmodule Macrina.RequestTest do
     assert {:error, {:invalid_request, {:unsupported_code, :bogus}}} = Request.to_message(request)
   end
 
+  test "to_message returns an error for invalid request fields" do
+    request = %Request{Request.new(:get) | type: :invalid}
+
+    assert {:error, {:invalid_request, :invalid_type}} = Request.to_message(request)
+  end
+
   test "response to_message returns an error for unsupported response codes" do
     response = Response.new(:bogus)
 
     assert {:error, {:invalid_response, {:unsupported_code, :bogus}}} =
              Response.to_message(response, nil)
+  end
+
+  test "response to_message returns an error for invalid response fields" do
+    response = %Response{Response.new(:content) | payload: %{bad: true}}
+
+    assert {:error, {:invalid_response, :invalid_payload}} = Response.to_message(response, nil)
   end
 end

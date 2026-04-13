@@ -108,20 +108,30 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle(%Connection{} = state, message, :continue) do
-    continue_message = Message.response(message, code: :continue, type: :ack)
+    case Message.response(message, code: :continue, type: :ack) do
+      {:ok, continue_message} ->
+        case Message.encode(continue_message) do
+          {:ok, bin} ->
+            Logger.info("#{__MODULE__}.handle/3 continuing",
+              conn: inspect(state),
+              request: inspect(message)
+            )
 
-    case Message.encode(continue_message) do
-      {:ok, bin} ->
-        Logger.info("#{__MODULE__}.handle/3 continuing",
-          conn: inspect(state),
-          request: inspect(message)
-        )
+            Connection.reply(state, bin)
+            state
 
-        Connection.reply(state, bin)
-        state
+          {:error, reason} ->
+            Logger.error("#{__MODULE__}.handle/3 failed to encode continue reply",
+              conn: inspect(state),
+              reason: inspect(reason),
+              request: inspect(message)
+            )
+
+            state
+        end
 
       {:error, reason} ->
-        Logger.error("#{__MODULE__}.handle/3 failed to encode continue reply",
+        Logger.error("#{__MODULE__}.handle/3 failed to build continue reply",
           conn: inspect(state),
           reason: inspect(reason),
           request: inspect(message)
@@ -207,19 +217,31 @@ defmodule Macrina.Connection.Server do
   end
 
   defp reply_incomplete_transfer(state, message) do
-    reply = incomplete_transfer_reply(message)
+    case incomplete_transfer_reply(message) do
+      {:ok, reply} ->
+        case Message.encode(reply) do
+          {:ok, encoded_reply} ->
+            Connection.reply(state, encoded_reply)
 
-    case Message.encode(reply) do
-      {:ok, encoded_reply} ->
-        Connection.reply(state, encoded_reply)
+            state
+            |> set_last_reply(message.token, encoded_reply)
+            |> reset_blocks()
+            |> reply_to_client(message)
 
-        state
-        |> set_last_reply(message.token, encoded_reply)
-        |> reset_blocks()
-        |> reply_to_client(message)
+          {:error, reason} ->
+            Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to encode reply",
+              conn: inspect(state),
+              reason: inspect(reason),
+              request: inspect(message)
+            )
+
+            state
+            |> reset_blocks()
+            |> reply_to_client(message)
+        end
 
       {:error, reason} ->
-        Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to encode reply",
+        Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to build reply",
           conn: inspect(state),
           reason: inspect(reason),
           request: inspect(message)

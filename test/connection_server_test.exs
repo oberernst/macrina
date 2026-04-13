@@ -43,9 +43,10 @@ defmodule Macrina.ConnectionServerTest do
                name: name
              )
 
-    message = Message.build(:get, id: 1, token: <<1, 2, 3, 4, 5, 6, 7, 8, 9>>, type: :con)
+    message = Message.build!(:get, id: 1, token: <<1, 2, 3, 4>>, type: :con)
+    bad_message = %Message{message | token: <<1, 2, 3, 4, 5, 6, 7, 8, 9>>}
 
-    assert Server.call(pid, message) == {:error, {:encode_failed, :invalid_token_length}}
+    assert Server.call(pid, bad_message) == {:error, {:encode_failed, :invalid_token_length}}
 
     GenServer.stop(pid)
     :gen_udp.close(socket)

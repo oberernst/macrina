@@ -1,5 +1,5 @@
 defmodule Macrina.Request do
-  alias Macrina.{Codes, Message}
+  alias Macrina.Message
 
   @path_option "Uri-Path"
   @query_option "Uri-Query"
@@ -94,21 +94,23 @@ defmodule Macrina.Request do
   end
 
   def to_message(%__MODULE__{} = request) do
-    if Codes.valid_code?(request.method) do
-      options = to_options(request)
+    options = to_options(request)
 
-      message =
-        Message.build(request.method,
-          id: request.id,
-          options: options,
-          payload: request.payload,
-          token: request.token,
-          type: request.type
-        )
+    case Message.build(request.method,
+           id: request.id,
+           options: options,
+           payload: request.payload,
+           token: request.token,
+           type: request.type
+         ) do
+      {:ok, message} ->
+        {:ok, message}
 
-      {:ok, message}
-    else
-      {:error, {:invalid_request, {:unsupported_code, request.method}}}
+      {:error, :invalid_code} ->
+        {:error, {:invalid_request, {:unsupported_code, request.method}}}
+
+      {:error, reason} ->
+        {:error, {:invalid_request, reason}}
     end
   end
 

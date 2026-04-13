@@ -33,6 +33,9 @@ defmodule Macrina.Handler do
       %{error: reason, router: router}
     )
 
-    Message.response(message, code: :internal_server_error, type: :ack)
+    case Message.response(message, code: :internal_server_error, type: :ack) do
+      {:ok, reply} -> reply
+      {:error, _build_reason} -> nil
+    end
   end
 end

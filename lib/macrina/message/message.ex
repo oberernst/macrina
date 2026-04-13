@@ -28,34 +28,59 @@ defmodule Macrina.Message do
           | :invalid_token_length
           | :invalid_type
           | {:invalid_options, Binary.encode_error()}
+  @type build_error :: encode_error()
+  @type response_error :: build_error()
 
   @max_block_size 1024
   @method_codes Codes.method_codes()
   @response_codes Codes.response_codes()
-  @valid_codes @method_codes ++ @response_codes
+  @spec build(atom(), keyword()) :: {:ok, t()} | {:error, build_error()}
+  def build(code, opts \\ [])
 
-  def build(code, opts \\ []) when is_atom(code) when code in @valid_codes do
+  def build(code, opts) when is_atom(code) and is_list(opts) do
     options = Keyword.get(opts, :options, [])
-    control_block = Keyword.get(opts, :control_block, control_block(code, options))
-    descriptive_block = Keyword.get(opts, :descriptive_block, descriptive_block(code, options))
-    id = Keyword.get(opts, :id, Enum.random(10000..19999))
-    payload = Keyword.get(opts, :payload, <<>>)
-    token = Keyword.get(opts, :token, :crypto.strong_rand_bytes(4))
-    type = Keyword.get(opts, :type, :non)
+    id = id_or_default(Keyword.get(opts, :id))
+    payload = payload_or_default(Keyword.get(opts, :payload))
+    token = token_or_default(Keyword.get(opts, :token))
+    type = type_or_default(Keyword.get(opts, :type))
 
-    %__MODULE__{
-      code: code,
-      control_block: control_block,
-      descriptive_block: descriptive_block,
-      id: id,
-      options: options,
-      payload: payload,
-      token: token,
-      type: type
-    }
+    with :ok <- validate_code(code),
+         :ok <- validate_id(id),
+         :ok <- validate_payload(payload),
+         :ok <- validate_token(token),
+         :ok <- validate_type(type),
+         :ok <- validate_options(options) do
+      control_block = Keyword.get(opts, :control_block, control_block(code, options))
+      descriptive_block = Keyword.get(opts, :descriptive_block, descriptive_block(code, options))
+
+      message = %__MODULE__{
+        code: code,
+        control_block: control_block,
+        descriptive_block: descriptive_block,
+        id: id,
+        options: options,
+        payload: payload,
+        token: token,
+        type: type
+      }
+
+      {:ok, message}
+    end
+  end
+
+  def build(_code, _opts) do
+    {:error, :invalid_code}
+  end
+
+  def build!(code, opts \\ []) do
+    case build(code, opts) do
+      {:ok, message} -> message
+      {:error, reason} -> raise ArgumentError, "invalid CoAP message: #{inspect(reason)}"
+    end
   end
 
   def response(msg, opts \\ [])
+  @spec response(t(), keyword()) :: {:ok, t()} | {:error, response_error()}
 
   def response(%__MODULE__{control_block: %Block{size: s}} = m, params)
       when s > @max_block_size do
@@ -64,28 +89,37 @@ defmodule Macrina.Message do
   end
 
   def response(%__MODULE__{control_block: %Block{} = b} = msg, params) do
-    payload = Keyword.get(params, :payload, <<>>)
+    payload = payload_or_default(Keyword.get(params, :payload))
     options = Keyword.get(params, :options, [])
     code = Keyword.get(params, :code, :content)
 
-    {response_code, response_options, response_payload} =
-      response_block_parts(b, code, options, payload)
+    with :ok <- validate_payload(payload) do
+      {response_code, response_options, response_payload} =
+        response_block_parts(b, code, options, payload)
 
-    response_opts =
-      Keyword.merge(params,
-        id: msg.id,
-        options: response_options,
-        payload: response_payload,
-        token: msg.token
-      )
+      response_opts =
+        Keyword.merge(params,
+          id: msg.id,
+          options: response_options,
+          payload: response_payload,
+          token: msg.token
+        )
 
-    build(response_code, response_opts)
+      build(response_code, response_opts)
+    end
   end
 
   def response(%__MODULE__{id: id, token: token}, opts) do
     code = Keyword.get(opts, :code, :valid)
     opts = opts |> Keyword.put(:id, id) |> Keyword.put(:token, token)
     build(code, opts)
+  end
+
+  def response!(%__MODULE__{} = message, opts \\ []) do
+    case response(message, opts) do
+      {:ok, reply} -> reply
+      {:error, reason} -> raise ArgumentError, "invalid CoAP response: #{inspect(reason)}"
+    end
   end
 
   @doc """
@@ -270,6 +304,18 @@ defmodule Macrina.Message do
     end
   end
 
+  defp id_or_default(nil), do: Enum.random(10000..19999)
+  defp id_or_default(id), do: id
+
+  defp payload_or_default(nil), do: <<>>
+  defp payload_or_default(payload), do: payload
+
+  defp token_or_default(nil), do: :crypto.strong_rand_bytes(4)
+  defp token_or_default(token), do: token
+
+  defp type_or_default(nil), do: :non
+  defp type_or_default(type), do: type
+
   defp encode_empty_type(type) do
     case encode_type(type) do
       {:ok, 3} -> {:ok, 3}
@@ -308,12 +354,46 @@ defmodule Macrina.Message do
     {:error, :invalid_payload}
   end
 
+  defp validate_code(code) do
+    if Codes.valid_code?(code) do
+      :ok
+    else
+      {:error, :invalid_code}
+    end
+  end
+
   defp validate_id(id) when is_integer(id) and id >= 0 and id <= 65_535, do: :ok
   defp validate_id(_id), do: {:error, :invalid_id}
+
+  defp validate_options(options) when is_list(options) do
+    case Binary.encode(options) do
+      {:ok, _encoded_options} -> :ok
+      {:error, reason} -> {:error, {:invalid_options, reason}}
+    end
+  end
+
+  defp validate_options(_options) do
+    {:error, {:invalid_options, :invalid_options}}
+  end
+
+  defp validate_payload(payload) do
+    case encode_payload(payload) do
+      {:ok, _encoded_payload} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp validate_token(token) when not is_binary(token), do: {:error, :invalid_token}
   defp validate_token(token) when byte_size(token) > 8, do: {:error, :invalid_token_length}
   defp validate_token(_token), do: :ok
+
+  defp validate_type(type) do
+    if Types.valid_type?(type) do
+      :ok
+    else
+      {:error, :invalid_type}
+    end
+  end
 
   defp response_block_parts(block, code, options, payload) do
     payload_size = byte_size(payload)
