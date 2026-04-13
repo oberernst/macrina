@@ -1,9 +1,15 @@
 defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
-  alias Macrina.{Connection, Exchange, Handler, Message, Message.Opts.Block, Telemetry}
+  alias Macrina.{Codes, Connection, Exchange, Handler, Message, Message.Opts.Block, Telemetry}
   import Connection, only: :functions
 
+  @call_timeout :timer.seconds(10)
   @timeout :timer.minutes(5)
+  @default_ack_timeout 2_000
+  @default_exchange_lifetime 247_000
+  @default_max_retransmit 4
+  @request_codes Codes.method_codes()
+  @response_codes Codes.response_codes()
 
   def start_link(args) do
     with {:ok, handler} <- fetch_opt(args, :handler),
@@ -11,13 +17,26 @@ defmodule Macrina.Connection.Server do
          {:ok, port} <- fetch_opt(args, :port),
          {:ok, socket} <- fetch_opt(args, :socket) do
       name = connection_name(args, ip, port)
-      state = connection_state(handler, ip, port, socket)
+      ack_timeout = Keyword.get(args, :ack_timeout, @default_ack_timeout)
+      exchange_lifetime = Keyword.get(args, :exchange_lifetime, @default_exchange_lifetime)
+      max_retransmit = Keyword.get(args, :max_retransmit, @default_max_retransmit)
+
+      state =
+        connection_state(
+          handler,
+          ip,
+          port,
+          socket,
+          ack_timeout,
+          exchange_lifetime,
+          max_retransmit
+        )
 
       GenServer.start_link(__MODULE__, state, name: name)
     end
   end
 
-  def call(pid, message, timeout \\ 2000) do
+  def call(pid, message, timeout \\ @call_timeout) do
     GenServer.call(pid, {:request, message}, timeout)
   end
 
@@ -29,9 +48,12 @@ defmodule Macrina.Connection.Server do
   def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
     case Message.encode(message) do
       {:ok, packet} ->
-        next_state = register_request(state, message, from)
-
         :gen_udp.send(state.socket, {state.ip, state.port}, packet)
+
+        next_state =
+          state
+          |> register_request(message, from)
+          |> maybe_track_request(message, from, packet)
 
         {:noreply, next_state, @timeout}
 
@@ -46,11 +68,19 @@ defmodule Macrina.Connection.Server do
   end
 
   def handle_info({:coap, packet}, %Connection{} = state) do
-    {last_token, reply} = Connection.last_reply(state)
     decoded = Message.decode(packet)
-    next_state = next_packet_state(decoded, state, last_token, reply)
+    next_state = next_packet_state(decoded, state)
 
     {:noreply, next_state, @timeout}
+  end
+
+  def handle_info({:retransmit, token}, %Connection{} = state) do
+    {_timer_ref, state_without_timer} = pop_retry_timer(state, token)
+    {action, next_state} = retry_request(state_without_timer, token)
+
+    final_state = handle_retry_action(action, next_state)
+
+    {:noreply, final_state, @timeout}
   end
 
   def handle_info(:timeout, state) do
@@ -66,7 +96,7 @@ defmodule Macrina.Connection.Server do
 
     unless is_nil(caller) do
       {_, from} = caller
-      GenServer.reply(from, message)
+      GenServer.reply(from, {:ok, message})
     end
 
     next_state
@@ -76,25 +106,25 @@ defmodule Macrina.Connection.Server do
     case Handler.call(state.handler, state, message) do
       nil ->
         execute_connection_event(state, [:reply, :skipped], %{count: 1}, %{stage: :handler})
-        clear_last_reply(state, message.token)
+        cache_reply(state, message, nil)
 
       reply ->
         case encoded_reply(reply) do
           {:ok, bin} ->
             send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
-            set_last_reply(state, message.token, bin)
+            cache_reply(state, message, bin)
 
           {:error, reason} ->
             emit_reply_error(state, :encode, :handler, reason)
-            clear_last_reply(state, message.token)
+            state
         end
     end
   end
 
   defp handle(%Connection{} = state, message, :continue) do
     case send_built_reply(state, message, [code: :continue, type: :ack], %{stage: :continue}) do
-      {:ok, _reply, _bin} ->
-        state
+      {:ok, _reply, encoded_reply} ->
+        cache_reply(state, message, encoded_reply)
 
       {:error, step, reason} ->
         emit_reply_error(state, step, :continue, reason)
@@ -102,12 +132,28 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp next_packet_state(
-         {:ok, %Message{descriptive_block: %Block{more: true}} = message},
-         state,
-         _last_token,
-         _reply
-       ) do
+  defp next_packet_state({:ok, %Message{} = message}, state) do
+    case handle_exchange_message(state, message) do
+      {:handled, next_state} ->
+        next_state
+
+      :miss ->
+        case duplicate_request_reply(state, message) do
+          {:duplicate, reply} ->
+            resend_cached_reply(state, reply, message)
+
+          :miss ->
+            handle_packet_message(message, state)
+        end
+    end
+  end
+
+  defp next_packet_state(_decoded, state) do
+    execute_connection_event(state, [:decode, :error], %{count: 1}, %{})
+    state
+  end
+
+  defp handle_packet_message(%Message{descriptive_block: %Block{more: true}} = message, state) do
     emit_block_continue(state, message)
 
     state
@@ -116,49 +162,28 @@ defmodule Macrina.Connection.Server do
     |> reply_to_client(message)
   end
 
-  defp next_packet_state(
-         {:ok, %Message{descriptive_block: %Block{more: false}} = message},
-         state,
-         last_token,
-         reply
-       ) do
+  defp handle_packet_message(%Message{descriptive_block: %Block{more: false}} = message, state) do
     block_state = push_block(state, message)
     payload = read_blocks(block_state)
 
-    completed_block_state(block_state, message, payload, last_token, reply)
+    completed_block_state(block_state, message, payload)
   end
 
-  defp next_packet_state({:ok, %Message{token: token} = message}, state, token, reply) do
-    resend_cached_reply(state, reply, message)
-  end
-
-  defp next_packet_state({:ok, %Message{type: type} = message}, state, _last_token, _reply)
-       when type in [:ack, :rst] do
+  defp handle_packet_message(%Message{type: type} = message, state) when type in [:ack, :rst] do
     state
     |> handle(message)
     |> reply_to_client(message)
     |> complete_request(message)
   end
 
-  defp next_packet_state({:ok, %Message{} = message}, state, _last_token, _reply) do
+  defp handle_packet_message(%Message{} = message, state) do
     state
     |> handle(message)
     |> reply_to_client(message)
   end
 
-  defp next_packet_state(_decoded, state, _last_token, _reply) do
-    execute_connection_event(state, [:decode, :error], %{count: 1}, %{})
-    state
-  end
-
-  defp completed_block_state(state, message, payload, last_token, reply) do
-    # A final block can mean a duplicate replay, an incomplete transfer, or a
-    # newly completed request body. Keep those branches explicit and ordered.
+  defp completed_block_state(state, message, payload) do
     cond do
-      message.token == last_token ->
-        emit_reply_resent(state, message)
-        resend_cached_reply(state, reply, message)
-
       is_nil(payload) ->
         emit_incomplete_transfer(state, message)
         reply_incomplete_transfer(state, message)
@@ -189,7 +214,7 @@ defmodule Macrina.Connection.Server do
          ) do
       {:ok, _reply, encoded_reply} ->
         state
-        |> set_last_reply(message.token, encoded_reply)
+        |> cache_reply(message, encoded_reply)
         |> reset_blocks()
         |> reply_to_client(message)
 
@@ -210,18 +235,190 @@ defmodule Macrina.Connection.Server do
     reply_to_client(state, message)
   end
 
+  defp handle_exchange_message(state, %Message{type: :ack, code: :empty} = message) do
+    case acknowledge_request(state, message) do
+      {nil, _next_state} ->
+        :miss
+
+      {%{token: token}, next_state} ->
+        acknowledged_state =
+          next_state
+          |> cancel_retry_timer(token)
+          |> schedule_response_timeout(token)
+
+        {:handled, acknowledged_state}
+    end
+  end
+
+  defp handle_exchange_message(state, %Message{type: :rst} = message) do
+    case pending_request_for_id(state, message.id) do
+      {:ok, {token, request}} ->
+        next_state =
+          state
+          |> cancel_retry_timer(token)
+          |> complete_pending_request_state(token)
+
+        GenServer.reply(request.from, {:error, :request_reset})
+
+        {:handled, next_state}
+
+      :error ->
+        :miss
+    end
+  end
+
+  defp handle_exchange_message(state, %Message{code: code} = message)
+       when code in @response_codes do
+    case pending_request(state, message.token) do
+      {:ok, request} ->
+        next_state =
+          state
+          |> cancel_retry_timer(message.token)
+          |> maybe_acknowledge_response(message)
+          |> complete_pending_request_state(message.token)
+
+        GenServer.reply(request.from, {:ok, message})
+
+        {:handled, next_state}
+
+      :error ->
+        :miss
+    end
+  end
+
+  defp handle_exchange_message(_state, _message) do
+    :miss
+  end
+
+  defp duplicate_request_reply(state, message) do
+    if duplicate_request_message?(message) do
+      case cached_reply(state, message) do
+        {:ok, reply} ->
+          emit_dedup_hit(state, message, reply)
+          {:duplicate, reply}
+
+        :error ->
+          :miss
+      end
+    else
+      :miss
+    end
+  end
+
+  defp duplicate_request_message?(%Message{code: code, type: :con}) do
+    code in @request_codes
+  end
+
+  defp duplicate_request_message?(_message) do
+    false
+  end
+
   defp connection_name(args, ip, port) do
     Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
   end
 
-  defp connection_state(handler, ip, port, socket) do
+  defp connection_state(handler, ip, port, socket, ack_timeout, exchange_lifetime, max_retransmit) do
     %Connection{
+      ack_timeout: ack_timeout,
       exchange: %Exchange{},
+      exchange_lifetime: exchange_lifetime,
       handler: handler,
       ip: ip,
+      max_retransmit: max_retransmit,
       port: port,
+      retry_timers: %{},
       socket: socket
     }
+  end
+
+  defp maybe_track_request(%Connection{} = state, %Message{type: :con} = message, from, packet) do
+    state
+    |> track_request(message, from, packet)
+    |> schedule_retry_timer(message.token, 0)
+  end
+
+  defp maybe_track_request(%Connection{} = state, _message, _from, _packet) do
+    state
+  end
+
+  defp handle_retry_action({:retransmit, request}, state) do
+    :gen_udp.send(state.socket, {state.ip, state.port}, request.packet)
+
+    emit_retransmit(state, request)
+    schedule_retry_timer(state, request.token, request.attempts)
+  end
+
+  defp handle_retry_action({:timeout, request}, state) do
+    emit_timeout(state, request)
+    GenServer.reply(request.from, {:error, timeout_reason(request.state)})
+    state
+  end
+
+  defp handle_retry_action(:ignore, state) do
+    state
+  end
+
+  defp schedule_retry_timer(
+         %Connection{ack_timeout: ack_timeout} = state,
+         token,
+         retransmissions_sent
+       ) do
+    delay = ack_timeout * trunc(:math.pow(2, retransmissions_sent))
+    schedule_request_timer(state, token, delay)
+  end
+
+  defp schedule_response_timeout(%Connection{exchange_lifetime: exchange_lifetime} = state, token) do
+    schedule_request_timer(state, token, exchange_lifetime)
+  end
+
+  defp schedule_request_timer(%Connection{} = state, token, delay) do
+    timer_ref = Process.send_after(self(), {:retransmit, token}, delay)
+
+    put_retry_timer(state, token, timer_ref)
+  end
+
+  defp cancel_retry_timer(%Connection{} = state, token) do
+    case pop_retry_timer(state, token) do
+      {nil, next_state} ->
+        next_state
+
+      {timer_ref, next_state} ->
+        Process.cancel_timer(timer_ref)
+        next_state
+    end
+  end
+
+  defp complete_pending_request_state(%Connection{} = state, token) do
+    {_request, next_state} = complete_pending_request(state, token)
+    next_state
+  end
+
+  defp maybe_acknowledge_response(%Connection{} = state, %Message{type: :con, id: id}) do
+    case Message.build(:empty, id: id, type: :ack) do
+      {:ok, ack} ->
+        case encoded_reply(ack) do
+          {:ok, encoded_ack} ->
+            send_reply(state, encoded_ack, %{
+              code: :empty,
+              stage: :separate_response_ack,
+              type: :ack
+            })
+
+            state
+
+          {:error, reason} ->
+            emit_reply_error(state, :encode, :separate_response_ack, reason)
+            state
+        end
+
+      {:error, reason} ->
+        emit_reply_error(state, :build, :separate_response_ack, reason)
+        state
+    end
+  end
+
+  defp maybe_acknowledge_response(%Connection{} = state, _message) do
+    state
   end
 
   defp emit_block_continue(state, message) do
@@ -236,11 +433,42 @@ defmodule Macrina.Connection.Server do
     execute_connection_event(state, [:block, :continue], measurements, metadata)
   end
 
-  defp emit_reply_resent(state, message) do
+  defp emit_dedup_hit(state, message, reply) do
     measurements = %{count: 1}
-    metadata = %{code: message.code, stage: :completed_transfer, type: message.type}
 
-    execute_connection_event(state, [:reply, :resent], measurements, metadata)
+    metadata = %{
+      cached: not is_nil(reply),
+      code: message.code,
+      id: message.id,
+      type: message.type
+    }
+
+    event_metadata = Map.merge(connection_metadata(state), metadata)
+    Telemetry.execute([:exchange, :dedup, :hit], measurements, event_metadata)
+  end
+
+  defp emit_retransmit(state, request) do
+    measurements = %{attempt: request.attempts, bytes: byte_size(request.packet), count: 1}
+    metadata = %{id: request.id, token: request.token}
+
+    event_metadata = Map.merge(connection_metadata(state), metadata)
+    Telemetry.execute([:exchange, :retransmit], measurements, event_metadata)
+  end
+
+  defp emit_timeout(state, request) do
+    measurements = %{count: 1, retransmissions: request.attempts}
+    metadata = %{id: request.id, phase: request.state, token: request.token}
+
+    event_metadata = Map.merge(connection_metadata(state), metadata)
+    Telemetry.execute([:exchange, :timeout], measurements, event_metadata)
+  end
+
+  defp timeout_reason(:awaiting_ack) do
+    :ack_timeout
+  end
+
+  defp timeout_reason(:awaiting_response) do
+    :response_timeout
   end
 
   defp emit_incomplete_transfer(state, message) do
@@ -283,10 +511,6 @@ defmodule Macrina.Connection.Server do
       {:ok, encoded_reply} -> {:ok, encoded_reply}
       {:error, reason} -> {:error, :encode, reason}
     end
-  end
-
-  defp clear_last_reply(state, token) do
-    set_last_reply(state, token, nil)
   end
 
   defp send_reply(state, bin, metadata) do

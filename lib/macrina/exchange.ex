@@ -9,13 +9,26 @@ defmodule Macrina.Exchange do
 
   alias Macrina.{Message, Message.Opts.Block, Telemetry}
 
-  defstruct blocks: %{}, callers: [], ids: [], last_reply: {nil, nil}, tokens: []
+  @type reply_entry :: %{reply: binary() | nil, stored_at: integer()}
+
+  defstruct blocks: %{}, callers: [], ids: [], replies: %{}, requests: %{}, tokens: []
+
+  @type pending_request :: %{
+          attempts: non_neg_integer(),
+          from: tuple(),
+          id: non_neg_integer(),
+          packet: binary() | nil,
+          retries: non_neg_integer(),
+          state: :awaiting_ack | :awaiting_response,
+          token: binary()
+        }
 
   @type t :: %__MODULE__{
           blocks: %{optional(non_neg_integer()) => binary()},
           callers: [{binary(), tuple()}],
           ids: [non_neg_integer()],
-          last_reply: {binary() | nil, binary() | nil},
+          replies: %{optional(non_neg_integer()) => reply_entry()},
+          requests: %{optional(binary()) => pending_request()},
           tokens: [binary()]
         }
 
@@ -79,6 +92,28 @@ defmodule Macrina.Exchange do
     |> push_token(message)
   end
 
+  @spec track_request(t(), Message.t(), tuple(), binary(), non_neg_integer()) :: t()
+  def track_request(
+        %__MODULE__{requests: requests} = exchange,
+        %Message{} = message,
+        from,
+        packet,
+        retries
+      )
+      when is_binary(packet) and is_integer(retries) and retries >= 0 do
+    request = %{
+      attempts: 0,
+      from: from,
+      id: message.id,
+      packet: packet,
+      retries: retries,
+      state: :awaiting_ack,
+      token: message.token
+    }
+
+    %__MODULE__{exchange | requests: Map.put(requests, message.token, request)}
+  end
+
   @spec read_blocks(t()) :: String.t() | nil
   def read_blocks(%__MODULE__{blocks: blocks}) do
     sorted_blocks = Enum.sort_by(blocks, &elem(&1, 0), :asc)
@@ -98,17 +133,137 @@ defmodule Macrina.Exchange do
     %__MODULE__{exchange | blocks: %{}}
   end
 
-  @spec set_last_reply(t(), binary(), binary() | nil) :: t()
-  def set_last_reply(%__MODULE__{} = exchange, token, reply) do
-    %__MODULE__{exchange | last_reply: {token, reply}}
+  @spec cache_reply(t(), Message.t(), binary() | nil) :: t()
+  def cache_reply(%__MODULE__{} = exchange, %Message{} = message, reply)
+      when is_binary(reply) or is_nil(reply) do
+    now = System.monotonic_time(:millisecond)
+    cache_reply(exchange, message, reply, now)
   end
 
-  def last_reply(%__MODULE__{last_reply: last_reply}) do
-    last_reply
+  @spec cache_reply(t(), Message.t(), binary() | nil, integer()) :: t()
+  def cache_reply(%__MODULE__{replies: replies} = exchange, %Message{id: id}, reply, now)
+      when is_binary(reply) or is_nil(reply) do
+    reply_entry = %{reply: reply, stored_at: now}
+    next_replies = Map.put(replies, id, reply_entry)
+
+    %__MODULE__{exchange | replies: next_replies}
+  end
+
+  @spec cached_reply(t(), Message.t()) :: {:ok, binary() | nil} | :error
+  def cached_reply(%__MODULE__{} = exchange, %Message{} = message) do
+    cached_reply(exchange, message, System.monotonic_time(:millisecond), :infinity)
+  end
+
+  @spec cached_reply(t(), Message.t(), integer(), integer() | :infinity) ::
+          {:ok, binary() | nil} | :error
+  def cached_reply(%__MODULE__{replies: replies}, %Message{id: id}, now, lifetime)
+      when is_integer(now) do
+    case Map.fetch(replies, id) do
+      {:ok, %{reply: reply, stored_at: stored_at}} ->
+        if reply_expired?(stored_at, now, lifetime) do
+          :error
+        else
+          {:ok, reply}
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  @spec pending_request(t(), binary()) :: {:ok, pending_request()} | :error
+  def pending_request(%__MODULE__{requests: requests}, token) when is_binary(token) do
+    Map.fetch(requests, token)
+  end
+
+  @spec pending_request_for_id(t(), non_neg_integer()) ::
+          {:ok, {binary(), pending_request()}} | :error
+  def pending_request_for_id(%__MODULE__{requests: requests}, id) when is_integer(id) do
+    Enum.find_value(requests, :error, fn {token, request} ->
+      if request.id == id do
+        {:ok, {token, request}}
+      end
+    end)
+  end
+
+  @spec acknowledge_request(t(), Message.t()) :: {pending_request() | nil, t()}
+  def acknowledge_request(%__MODULE__{} = exchange, %Message{id: id}) do
+    case pending_request_for_id(exchange, id) do
+      {:ok, {token, request}} ->
+        next_request = %{request | packet: nil, state: :awaiting_response}
+        next_exchange = put_request(exchange, token, next_request)
+
+        {request, next_exchange}
+
+      :error ->
+        {nil, exchange}
+    end
+  end
+
+  @spec retry_request(t(), binary()) ::
+          {{:retransmit, pending_request()} | {:timeout, pending_request()} | :ignore, t()}
+  def retry_request(%__MODULE__{} = exchange, token) when is_binary(token) do
+    case pending_request(exchange, token) do
+      {:ok, %{attempts: attempts, retries: retries, state: :awaiting_ack} = request}
+      when attempts < retries ->
+        next_request = %{request | attempts: attempts + 1}
+        next_exchange = put_request(exchange, token, next_request)
+
+        {{:retransmit, next_request}, next_exchange}
+
+      {:ok, %{state: :awaiting_ack} = request} ->
+        {_request, next_exchange} = complete_pending_request(exchange, token)
+        {{:timeout, request}, next_exchange}
+
+      {:ok, %{state: :awaiting_response} = request} ->
+        {_request, next_exchange} = complete_pending_request(exchange, token)
+        {{:timeout, request}, next_exchange}
+
+      _other ->
+        {:ignore, exchange}
+    end
+  end
+
+  @spec complete_pending_request(t(), binary()) :: {pending_request() | nil, t()}
+  def complete_pending_request(%__MODULE__{requests: requests} = exchange, token)
+      when is_binary(token) do
+    case Map.pop(requests, token) do
+      {nil, _next_requests} ->
+        {nil, exchange}
+
+      {request, next_requests} ->
+        next_exchange =
+          exchange
+          |> pop_caller({token, request.from})
+          |> delete_id(request.id)
+          |> delete_token(token)
+
+        {%{request | token: token}, %__MODULE__{next_exchange | requests: next_requests}}
+    end
   end
 
   defp caller_for_token(%__MODULE__{callers: callers}, token) when is_binary(token) do
     Enum.find(callers, fn {caller_token, _from} -> caller_token == token end)
+  end
+
+  defp delete_id(%__MODULE__{ids: ids} = exchange, id) do
+    %__MODULE__{exchange | ids: List.delete(ids, id)}
+  end
+
+  defp delete_token(%__MODULE__{tokens: tokens} = exchange, token) do
+    %__MODULE__{exchange | tokens: List.delete(tokens, token)}
+  end
+
+  defp put_request(%__MODULE__{requests: requests} = exchange, token, request) do
+    %__MODULE__{exchange | requests: Map.put(requests, token, request)}
+  end
+
+  defp reply_expired?(_stored_at, _now, :infinity) do
+    false
+  end
+
+  defp reply_expired?(stored_at, now, lifetime) when is_integer(lifetime) and lifetime >= 0 do
+    now - stored_at >= lifetime
   end
 
   defp contiguous_blocks(sorted_blocks) do

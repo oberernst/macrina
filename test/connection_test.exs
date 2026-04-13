@@ -73,12 +73,12 @@ defmodule Macrina.ConnectionTest do
     next_state =
       state
       |> Connection.register_request(message, from)
-      |> Connection.set_last_reply(message.token, "reply")
+      |> Connection.cache_reply(message, "reply")
 
     assert next_state.exchange.callers == [{<<1, 2, 3, 4>>, from}]
     assert next_state.exchange.ids == [41]
     assert next_state.exchange.tokens == [<<1, 2, 3, 4>>]
-    assert Connection.last_reply(next_state) == {<<1, 2, 3, 4>>, "reply"}
+    assert Connection.cached_reply(next_state, message) == {:ok, "reply"}
 
     {caller, claimed_state} = Connection.pop_caller_for_token(next_state, message.token)
 
@@ -93,5 +93,27 @@ defmodule Macrina.ConnectionTest do
     assert cleared_state.exchange.ids == []
     assert cleared_state.exchange.tokens == []
     assert cleared_state.exchange.blocks == %{}
+  end
+
+  test "connection cached_reply respects exchange lifetime" do
+    message = Message.build!(:get, id: 42, token: <<4, 2, 4, 2>>, type: :con)
+
+    expired_exchange =
+      %Exchange{}
+      |> Exchange.cache_reply(message, "reply", -1_000_000_000_000)
+
+    fresh_exchange =
+      %Exchange{}
+      |> Exchange.cache_reply(message, "reply")
+
+    expired_state = %Connection{exchange: expired_exchange, exchange_lifetime: 0}
+
+    fresh_state = %Connection{
+      exchange: fresh_exchange,
+      exchange_lifetime: :math.pow(10, 12) |> trunc()
+    }
+
+    assert Connection.cached_reply(expired_state, message) == :error
+    assert Connection.cached_reply(fresh_state, message) == {:ok, "reply"}
   end
 end

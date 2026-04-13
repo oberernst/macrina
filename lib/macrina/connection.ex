@@ -1,14 +1,27 @@
 defmodule Macrina.Connection do
   alias Macrina.{Exchange, Handler, Message}
 
-  defstruct [:exchange, :handler, :ip, :name, :port, :socket]
+  defstruct ack_timeout: 2_000,
+            exchange: %Exchange{},
+            exchange_lifetime: 247_000,
+            handler: nil,
+            ip: nil,
+            max_retransmit: 4,
+            name: nil,
+            port: nil,
+            retry_timers: %{},
+            socket: nil
 
   @type t :: %__MODULE__{
+          ack_timeout: non_neg_integer(),
           exchange: Exchange.t(),
+          exchange_lifetime: non_neg_integer(),
           handler: Handler.t(),
           ip: tuple(),
+          max_retransmit: non_neg_integer(),
           name: String.t(),
           port: integer(),
+          retry_timers: %{optional(binary()) => reference()},
           socket: port()
         }
 
@@ -53,6 +66,13 @@ defmodule Macrina.Connection do
     update_exchange(state, &Exchange.register_request(&1, message, from))
   end
 
+  def track_request(%__MODULE__{} = state, %Message{} = message, from, packet)
+      when is_binary(packet) do
+    max_retransmit = state.max_retransmit
+
+    update_exchange(state, &Exchange.track_request(&1, message, from, packet, max_retransmit))
+  end
+
   @spec read_blocks(t()) :: String.t() | nil
   def read_blocks(%__MODULE__{exchange: exchange}) do
     Exchange.read_blocks(exchange)
@@ -67,13 +87,62 @@ defmodule Macrina.Connection do
     update_exchange(state, &Exchange.reset_blocks/1)
   end
 
-  @spec set_last_reply(t(), binary(), binary() | nil) :: t()
-  def set_last_reply(%__MODULE__{} = state, token, reply) do
-    update_exchange(state, &Exchange.set_last_reply(&1, token, reply))
+  @spec cache_reply(t(), Message.t(), binary() | nil) :: t()
+  def cache_reply(%__MODULE__{} = state, %Message{} = message, reply) do
+    update_exchange(state, &Exchange.cache_reply(&1, message, reply))
   end
 
-  def last_reply(%__MODULE__{exchange: exchange}) do
-    Exchange.last_reply(exchange)
+  @spec cached_reply(t(), Message.t()) :: {:ok, binary() | nil} | :error
+  def cached_reply(
+        %__MODULE__{exchange: exchange, exchange_lifetime: exchange_lifetime},
+        %Message{} = message
+      ) do
+    now = System.monotonic_time(:millisecond)
+    Exchange.cached_reply(exchange, message, now, exchange_lifetime)
+  end
+
+  @spec pending_request(t(), binary()) :: {:ok, Exchange.pending_request()} | :error
+  def pending_request(%__MODULE__{exchange: exchange}, token) when is_binary(token) do
+    Exchange.pending_request(exchange, token)
+  end
+
+  @spec pending_request_for_id(t(), non_neg_integer()) ::
+          {:ok, {binary(), Exchange.pending_request()}} | :error
+  def pending_request_for_id(%__MODULE__{exchange: exchange}, id) when is_integer(id) do
+    Exchange.pending_request_for_id(exchange, id)
+  end
+
+  @spec acknowledge_request(t(), Message.t()) :: {Exchange.pending_request() | nil, t()}
+  def acknowledge_request(%__MODULE__{} = state, %Message{} = message) do
+    {request, next_exchange} = Exchange.acknowledge_request(state.exchange, message)
+    {request, put_exchange(state, next_exchange)}
+  end
+
+  @spec retry_request(t(), binary()) ::
+          {{:retransmit, Exchange.pending_request()}
+           | {:timeout, Exchange.pending_request()}
+           | :ignore, t()}
+  def retry_request(%__MODULE__{} = state, token) when is_binary(token) do
+    {action, next_exchange} = Exchange.retry_request(state.exchange, token)
+    {action, put_exchange(state, next_exchange)}
+  end
+
+  @spec complete_pending_request(t(), binary()) :: {Exchange.pending_request() | nil, t()}
+  def complete_pending_request(%__MODULE__{} = state, token) when is_binary(token) do
+    {request, next_exchange} = Exchange.complete_pending_request(state.exchange, token)
+    {request, put_exchange(state, next_exchange)}
+  end
+
+  def put_retry_timer(%__MODULE__{retry_timers: retry_timers} = state, token, timer_ref)
+      when is_binary(token) do
+    next_timers = Map.put(retry_timers, token, timer_ref)
+    %__MODULE__{state | retry_timers: next_timers}
+  end
+
+  def pop_retry_timer(%__MODULE__{retry_timers: retry_timers} = state, token)
+      when is_binary(token) do
+    {timer_ref, next_timers} = Map.pop(retry_timers, token)
+    {timer_ref, %__MODULE__{state | retry_timers: next_timers}}
   end
 
   defp update_exchange(%__MODULE__{exchange: exchange} = state, fun) do
