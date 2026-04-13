@@ -49,7 +49,8 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  def handle_info({:coap, packet}, %Connection{last_reply: {last_token, reply}} = state) do
+  def handle_info({:coap, packet}, %Connection{} = state) do
+    {last_token, reply} = Connection.last_reply(state)
     decoded = Message.decode(packet)
     next_state = next_packet_state(decoded, state, last_token, reply)
 
@@ -276,14 +277,11 @@ defmodule Macrina.Connection.Server do
 
   defp connection_state(handler, ip, port, socket) do
     %Connection{
-      blocks: %{},
       callers: [],
+      exchange: %Macrina.Exchange{},
       handler: handler,
-      ids: [],
       ip: ip,
-      last_reply: {nil, nil},
       port: port,
-      tokens: [],
       socket: socket
     }
   end

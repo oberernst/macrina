@@ -1,7 +1,7 @@
 defmodule Macrina.ConnectionTest do
   use ExUnit.Case, async: true
 
-  alias Macrina.{Connection, Message, Message.Opts.Block}
+  alias Macrina.{Connection, Exchange, Message, Message.Opts.Block}
 
   def telemetry_handler(event, measurements, metadata, pid) do
     send(pid, {event, measurements, metadata})
@@ -24,7 +24,7 @@ defmodule Macrina.ConnectionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    state = %Connection{blocks: %{}}
+    state = %Connection{exchange: %Exchange{}}
 
     message = %Message{
       descriptive_block: %Block{number: 0, more: false, size: 16},
@@ -56,11 +56,37 @@ defmodule Macrina.ConnectionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    state = %Connection{blocks: %{0 => "ab", 2 => "cd"}}
+    exchange = %Exchange{blocks: %{0 => "ab", 2 => "cd"}}
+    state = %Connection{exchange: exchange}
 
     assert Connection.read_blocks(state) == nil
 
     assert_receive {[:macrina, :connection, :block, :missing], %{count: 1},
                     %{missing_block: 1, received_blocks: 2}}
+  end
+
+  test "connection wraps exchange state helpers" do
+    state = %Connection{exchange: %Exchange{}}
+    message = Message.build!(:get, id: 41, token: <<1, 2, 3, 4>>, type: :con)
+
+    next_state =
+      state
+      |> Connection.push_id(message)
+      |> Connection.push_token(message)
+      |> Connection.set_last_reply(message.token, "reply")
+
+    assert next_state.exchange.ids == [41]
+    assert next_state.exchange.tokens == [<<1, 2, 3, 4>>]
+    assert Connection.last_reply(next_state) == {<<1, 2, 3, 4>>, "reply"}
+
+    cleared_state =
+      next_state
+      |> Connection.pop_id(message)
+      |> Connection.pop_token(message)
+      |> Connection.reset_blocks()
+
+    assert cleared_state.exchange.ids == []
+    assert cleared_state.exchange.tokens == []
+    assert cleared_state.exchange.blocks == %{}
   end
 end
