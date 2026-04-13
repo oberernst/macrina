@@ -9,6 +9,7 @@ defmodule Macrina.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Macrina.Observe, []},
       # Starts a worker by calling: Macrina.Worker.start_link(arg)
       # {Macrina.Worker, arg}
       {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one}

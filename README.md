@@ -52,6 +52,31 @@ full payload is reassembled. If application code sets `Block2` explicitly on
 the request, the client preserves that lower-level intent and returns just the
 requested chunk.
 
+Observe flows now have a public API as well. `Macrina.Client.observe/3`
+registers the relationship and returns both the initial response and a
+`Macrina.Observe.Subscription` handle. Servers can fan out notifications with
+`Macrina.Server.notify/3`, and clients can cancel with
+`Macrina.Client.cancel_observe/1`.
+
+```elixir
+{:ok, client} = Macrina.Client.connect(ip: {127, 0, 0, 1}, port: 5683)
+
+request = Macrina.Request.from_uri!(:get, "/temperature")
+
+{:ok, subscription, response} =
+  Macrina.Client.observe(client, request, notify_to: self())
+
+response.payload
+# => "22.3 C"
+
+receive do
+  {:macrina_observe, ^subscription, notification} ->
+    notification.payload
+end
+
+:ok = Macrina.Client.cancel_observe(subscription)
+```
+
 The public server and endpoint entrypoints now accept a typed `Block1` upload
 policy and forward it into each per-peer connection:
 

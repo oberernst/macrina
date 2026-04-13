@@ -3,12 +3,17 @@ defmodule Macrina.Connection.Server do
 
   alias Macrina.{
     Block1.Chunk,
+    Blockwise,
     Codes,
     Connection,
     Exchange,
     Handler,
     Message,
     Message.Opts.Block,
+    Observe,
+    Observe.Subscription,
+    Request,
+    Response,
     Telemetry
   }
 
@@ -36,11 +41,13 @@ defmodule Macrina.Connection.Server do
 
       block1_mode = Keyword.get(args, :block1_mode, :atomic)
       block1_preferred_block_size = Keyword.get(args, :block1_preferred_block_size)
+      endpoint = Keyword.get(args, :endpoint)
       exchange_lifetime = Keyword.get(args, :exchange_lifetime, @default_exchange_lifetime)
       max_retransmit = Keyword.get(args, :max_retransmit, @default_max_retransmit)
 
       state =
         connection_state(
+          endpoint,
           handler,
           ip,
           port,
@@ -59,6 +66,18 @@ defmodule Macrina.Connection.Server do
 
   def call(pid, message, timeout \\ @call_timeout) do
     GenServer.call(pid, {:request, message}, timeout)
+  end
+
+  def observe_subscribe(pid, %Subscription{} = subscription, observe_value) do
+    GenServer.call(pid, {:observe_subscribe, subscription, observe_value})
+  end
+
+  def observe_unsubscribe(pid, token) when is_binary(token) do
+    GenServer.call(pid, {:observe_unsubscribe, token})
+  end
+
+  def notify_observer(pid, notification, %Response{} = response) do
+    GenServer.cast(pid, {:observe_notify, notification, response})
   end
 
   def init(state) do
@@ -88,6 +107,26 @@ defmodule Macrina.Connection.Server do
     end
   end
 
+  def handle_call(
+        {:observe_subscribe, %Subscription{} = subscription, observe_value},
+        _from,
+        %Connection{} = state
+      ) do
+    next_state = put_observe_subscription(state, subscription, observe_value)
+    {:reply, :ok, next_state, @timeout}
+  end
+
+  def handle_call({:observe_unsubscribe, token}, _from, %Connection{} = state)
+      when is_binary(token) do
+    next_state = drop_observe_subscription(state, token)
+    {:reply, :ok, next_state, @timeout}
+  end
+
+  def handle_cast({:observe_notify, notification, %Response{} = response}, %Connection{} = state) do
+    next_state = send_observe_notification(state, notification, response)
+    {:noreply, next_state, @timeout}
+  end
+
   def handle_info({:coap, packet}, %Connection{} = state) do
     decoded = Message.decode(packet)
     next_state = next_packet_state(decoded, state)
@@ -109,6 +148,7 @@ defmodule Macrina.Connection.Server do
   end
 
   def terminate(:normal, state) do
+    Observe.drop_connection(self())
     execute_connection_event(state, [:stop], %{system_time: System.system_time()}, %{})
   end
 
@@ -130,14 +170,21 @@ defmodule Macrina.Connection.Server do
         cache_reply(state, message, nil)
 
       reply ->
-        case encoded_reply(reply) do
+        {next_state, prepared_reply} = prepare_observe_reply(state, message, reply)
+
+        case encoded_reply(prepared_reply) do
           {:ok, bin} ->
-            send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
-            cache_reply(state, message, bin)
+            send_reply(next_state, bin, %{
+              code: prepared_reply.code,
+              stage: :handler,
+              type: prepared_reply.type
+            })
+
+            cache_reply(next_state, message, bin)
 
           {:error, reason} ->
-            emit_reply_error(state, :encode, :handler, reason)
-            state
+            emit_reply_error(next_state, :encode, :handler, reason)
+            next_state
         end
     end
   end
@@ -315,7 +362,7 @@ defmodule Macrina.Connection.Server do
         {:handled, next_state}
 
       :error ->
-        :miss
+        handle_observe_response(state, message)
     end
   end
 
@@ -351,6 +398,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp connection_state(
+         endpoint,
          handler,
          ip,
          port,
@@ -367,11 +415,13 @@ defmodule Macrina.Connection.Server do
       block1_max_body_size: block1_max_body_size,
       block1_mode: block1_mode,
       block1_preferred_block_size: block1_preferred_block_size,
+      endpoint: endpoint,
       exchange: %Exchange{},
       exchange_lifetime: exchange_lifetime,
       handler: handler,
       ip: ip,
       max_retransmit: max_retransmit,
+      observe_subscriptions: %{},
       port: port,
       retry_timers: %{},
       socket: socket
@@ -726,6 +776,308 @@ defmodule Macrina.Connection.Server do
     peer_name = Macrina.conn_name(state.ip, state.port)
 
     %{ip: state.ip, peer: peer_name, port: state.port}
+  end
+
+  defp prepare_observe_reply(%Connection{endpoint: nil} = state, _request, %Message{} = reply) do
+    {state, reply}
+  end
+
+  defp prepare_observe_reply(%Connection{} = state, %Message{} = request, %Message{} = reply) do
+    case observe_request_action(request) do
+      {:register, path} when reply.code == :content ->
+        case Observe.register(state.endpoint, self(), path, request.token) do
+          {:ok, observe_value} ->
+            next_reply = put_message_option(reply, "Observe", observe_value)
+            {state, next_reply}
+
+          {:error, _reason} ->
+            {state, reply}
+        end
+
+      {:cancel, _path} ->
+        :ok = Observe.cancel(state.endpoint, self(), request.token)
+        {state, delete_message_option(reply, "Observe")}
+
+      :ignore ->
+        {state, reply}
+    end
+  end
+
+  defp observe_request_action(%Message{} = message) do
+    with {:ok, request} <- Request.from_message(message),
+         :get <- request.method do
+      case Request.observe(request) do
+        0 -> {:register, request.path}
+        1 -> {:cancel, request.path}
+        _other -> :ignore
+      end
+    else
+      _other -> :ignore
+    end
+  end
+
+  defp handle_observe_response(%Connection{} = state, %Message{} = message) do
+    case observe_subscription(state, message.token) do
+      {:ok, subscription_entry} ->
+        next_state =
+          state
+          |> maybe_acknowledge_response(message)
+          |> handle_client_observe_response(subscription_entry, message)
+
+        {:handled, next_state}
+
+      :error ->
+        :miss
+    end
+  end
+
+  defp handle_client_observe_response(
+         %Connection{} = state,
+         subscription_entry,
+         %Message{} = message
+       ) do
+    observe_value = message_option(message.options, "Observe")
+
+    if stale_observe?(subscription_entry, observe_value) do
+      state
+    else
+      next_observe = observe_value || subscription_entry.last_observe
+      subscription_entry = %{subscription_entry | last_observe: next_observe}
+      next_state = put_observe_entry(state, subscription_entry)
+      maybe_collect_observe_block2(next_state, subscription_entry, message)
+    end
+  end
+
+  defp maybe_collect_observe_block2(
+         %Connection{} = state,
+         subscription_entry,
+         %Message{descriptive_block: nil} = message
+       ) do
+    state
+    |> clear_observe_transfers(subscription_entry.subscription.token)
+    |> deliver_observe_response(subscription_entry.subscription, message)
+  end
+
+  defp maybe_collect_observe_block2(
+         %Connection{} = state,
+         %{subscription: %Subscription{request: request}} = subscription_entry,
+         %Message{descriptive_block: %Block{more: more}} = message
+       ) do
+    if is_nil(Request.block2(request)) do
+      transfers = subscription_entry.transfers
+
+      with {:ok, next_transfers} <- Blockwise.put_transfer(transfers, message) do
+        next_state =
+          put_observe_transfers(state, subscription_entry.subscription.token, next_transfers)
+
+        if more do
+          send_next_observe_block_request(next_state, subscription_entry.subscription, message)
+        else
+          finalize_observe_block2(
+            next_state,
+            subscription_entry.subscription,
+            message,
+            next_transfers
+          )
+        end
+      else
+        {:error, _reason} ->
+          deliver_observe_response(state, subscription_entry.subscription, message)
+      end
+    else
+      deliver_observe_response(state, subscription_entry.subscription, message)
+    end
+  end
+
+  defp finalize_observe_block2(
+         %Connection{} = state,
+         %Subscription{} = subscription,
+         message,
+         transfers
+       ) do
+    case Blockwise.assemble(transfers, message) do
+      {:ok, payload, _metadata} ->
+        full_message = %{message | payload: payload}
+
+        state
+        |> clear_observe_transfers(subscription.token)
+        |> deliver_observe_response(subscription, full_message)
+
+      _other ->
+        deliver_observe_response(state, subscription, message)
+    end
+  end
+
+  defp send_next_observe_block_request(
+         %Connection{} = state,
+         %Subscription{} = subscription,
+         message
+       ) do
+    block = message.descriptive_block
+    next_block = %Block{number: block.number + 1, more: false, size: block.size}
+
+    request =
+      subscription.request
+      |> clear_request_option("Observe")
+      |> Request.put_block2(next_block)
+      |> then(fn next_request -> %Request{next_request | id: nil, token: subscription.token} end)
+
+    with {:ok, next_message} <- Request.to_message(request),
+         {:ok, packet} <- Message.encode(next_message) do
+      :gen_udp.send(state.socket, {state.ip, state.port}, packet)
+      state
+    else
+      _other -> state
+    end
+  end
+
+  defp deliver_observe_response(
+         %Connection{} = state,
+         %Subscription{} = subscription,
+         %Message{} = message
+       ) do
+    response = Response.from_message(message)
+    send(subscription.notify_to, {:macrina_observe, subscription, response})
+    state
+  end
+
+  defp send_observe_notification(%Connection{} = state, notification, %Response{} = response) do
+    notification_response =
+      response
+      |> normalize_notification_type()
+      |> Response.put_observe(notification.observe)
+      |> then(fn next_response ->
+        %Response{next_response | id: nil, token: notification.token}
+      end)
+
+    case Response.to_message(notification_response, nil) do
+      {:ok, message} ->
+        case Message.encode(message) do
+          {:ok, packet} ->
+            send_reply(state, packet, %{
+              code: message.code,
+              observe: notification.observe,
+              path: notification.path,
+              stage: :observe,
+              type: message.type
+            })
+
+            Telemetry.execute(
+              [:observe, :notify],
+              %{bytes: byte_size(packet), count: 1},
+              %{path: notification.path, token: notification.token, observe: notification.observe}
+            )
+
+            state
+
+          {:error, reason} ->
+            emit_reply_error(state, :encode, :observe, reason)
+            state
+        end
+
+      {:error, reason} ->
+        execute_connection_event(state, [:reply, :build, :error], %{count: 1}, %{
+          error: reason,
+          stage: :observe
+        })
+
+        state
+    end
+  end
+
+  defp put_observe_subscription(
+         %Connection{} = state,
+         %Subscription{} = subscription,
+         observe_value
+       ) do
+    entry = %{
+      last_observe: observe_value,
+      subscription: subscription,
+      token: subscription.token,
+      transfers: %{}
+    }
+
+    put_observe_entry(state, entry)
+  end
+
+  defp put_observe_entry(%Connection{observe_subscriptions: subscriptions} = state, entry) do
+    next_subscriptions = Map.put(subscriptions, entry.token, entry)
+    %Connection{state | observe_subscriptions: next_subscriptions}
+  end
+
+  defp observe_subscription(%Connection{observe_subscriptions: subscriptions}, token) do
+    Map.fetch(subscriptions, token)
+  end
+
+  defp drop_observe_subscription(%Connection{observe_subscriptions: subscriptions} = state, token) do
+    next_subscriptions = Map.delete(subscriptions, token)
+    %Connection{state | observe_subscriptions: next_subscriptions}
+  end
+
+  defp put_observe_transfers(%Connection{} = state, token, transfers) do
+    case observe_subscription(state, token) do
+      {:ok, entry} -> put_observe_entry(state, %{entry | transfers: transfers})
+      :error -> state
+    end
+  end
+
+  defp clear_observe_transfers(%Connection{} = state, token) do
+    put_observe_transfers(state, token, %{})
+  end
+
+  defp stale_observe?(%{last_observe: nil}, _observe_value) do
+    false
+  end
+
+  defp stale_observe?(%{}, nil) do
+    false
+  end
+
+  defp stale_observe?(%{last_observe: last_observe}, observe_value)
+       when observe_value < last_observe do
+    true
+  end
+
+  defp stale_observe?(%{last_observe: last_observe, transfers: transfers}, observe_value)
+       when observe_value == last_observe do
+    map_size(transfers) == 0
+  end
+
+  defp stale_observe?(%{}, _observe_value) do
+    false
+  end
+
+  defp normalize_notification_type(%Response{type: type} = response) when type in [:con, :non] do
+    response
+  end
+
+  defp normalize_notification_type(%Response{} = response) do
+    %Response{response | type: :non}
+  end
+
+  defp clear_request_option(%Request{options: options} = request, name) do
+    next_options = Enum.reject(options, fn {option_name, _value} -> option_name == name end)
+    %Request{request | options: next_options}
+  end
+
+  defp put_message_option(%Message{options: options} = message, name, value) do
+    next_options = delete_option(options, name) ++ [{name, value}]
+    %Message{message | options: next_options}
+  end
+
+  defp delete_message_option(%Message{options: options} = message, name) do
+    %Message{message | options: delete_option(options, name)}
+  end
+
+  defp delete_option(options, name) do
+    Enum.reject(options, fn {option_name, _value} -> option_name == name end)
+  end
+
+  defp message_option(options, name) do
+    case List.keyfind(options, name, 0) do
+      {^name, value} -> value
+      nil -> nil
+    end
   end
 
   defp fetch_opt(args, key) do

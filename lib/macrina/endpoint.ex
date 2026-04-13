@@ -78,7 +78,7 @@ defmodule Macrina.Endpoint do
     conn_name = Macrina.conn_name(ip, port)
 
     child_args =
-      [handler: state.handler, ip: ip, port: port, socket: socket]
+      [endpoint: self(), handler: state.handler, ip: ip, port: port, socket: socket]
       |> Keyword.merge(state.connection_opts)
 
     init_args = {Server, child_args}

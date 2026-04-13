@@ -1,5 +1,6 @@
 defmodule Macrina.Server do
-  alias Macrina.{Block1, Endpoint, Router}
+  alias Macrina.{Block1, Endpoint, Observe, Response, Router}
+  alias Macrina.Connection.Server, as: ConnectionServer
 
   def start_link(opts) when is_list(opts) do
     with {:ok, endpoint_opts} <- build_endpoint_opts(opts) do
@@ -11,6 +12,24 @@ defmodule Macrina.Server do
     case start_link(opts) do
       {:ok, pid} -> pid
       {:error, reason} -> raise ArgumentError, "invalid server start options: #{inspect(reason)}"
+    end
+  end
+
+  def notify(server, path, %Response{} = response) do
+    with {:ok, endpoint} <- resolve_endpoint(server),
+         {:ok, notifications} <- Observe.notifications(endpoint, path) do
+      Enum.each(notifications, fn notification ->
+        ConnectionServer.notify_observer(notification.connection, notification, response)
+      end)
+
+      {:ok, length(notifications)}
+    end
+  end
+
+  def notify!(server, path, %Response{} = response) do
+    case notify(server, path, response) do
+      {:ok, count} -> count
+      {:error, reason} -> raise ArgumentError, "failed to notify observers: #{inspect(reason)}"
     end
   end
 
@@ -82,6 +101,17 @@ defmodule Macrina.Server do
       {:error, :conflicting_options}
     else
       :ok
+    end
+  end
+
+  defp resolve_endpoint(server) when is_pid(server) do
+    {:ok, server}
+  end
+
+  defp resolve_endpoint(server) do
+    case GenServer.whereis(server) do
+      nil -> {:error, {:endpoint_unavailable, server}}
+      endpoint -> {:ok, endpoint}
     end
   end
 end

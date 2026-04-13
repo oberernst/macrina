@@ -5,6 +5,7 @@ defmodule Macrina.Client do
     Endpoint,
     Message,
     Message.Opts.Block,
+    Observe.Subscription,
     Request,
     Response,
     Telemetry
@@ -72,6 +73,51 @@ defmodule Macrina.Client do
     end
   end
 
+  def observe(client, request_or_uri, opts \\ [])
+
+  def observe(%__MODULE__{} = client, %Request{} = request, opts) when is_list(opts) do
+    notify_to = Keyword.get(opts, :notify_to, self())
+    observe_request = put_initial_observe(request)
+    metadata = observe_metadata(client, observe_request)
+
+    Telemetry.span([:client, :request], metadata, fn ->
+      result = do_observe(client.conn, observe_request, notify_to)
+      {result, telemetry_result_metadata(result)}
+    end)
+  end
+
+  def observe(%__MODULE__{} = client, uri, opts) when is_binary(uri) and is_list(opts) do
+    {notify_to, request_opts} = Keyword.pop(opts, :notify_to, self())
+
+    with {:ok, request} <- Request.from_uri(:get, uri, request_opts) do
+      observe(client, request, notify_to: notify_to)
+    end
+  end
+
+  def observe!(%__MODULE__{} = client, request_or_uri, opts \\ []) do
+    case observe(client, request_or_uri, opts) do
+      {:ok, subscription, response} -> {subscription, response}
+      {:error, reason} -> raise RuntimeError, "client observe failed: #{inspect(reason)}"
+    end
+  end
+
+  def cancel_observe(%Subscription{} = subscription) do
+    cancel_request = observe_cancel_request(subscription)
+
+    with {:ok, message} <- Request.to_message(cancel_request),
+         {:ok, response_message} <- call_server(subscription.connection, message),
+         :ok <- Server.observe_unsubscribe(subscription.connection, subscription.token) do
+      {:ok, Response.from_message(response_message)}
+    end
+  end
+
+  def cancel_observe!(%Subscription{} = subscription) do
+    case cancel_observe(subscription) do
+      {:ok, response} -> response
+      {:error, reason} -> raise RuntimeError, "client observe cancel failed: #{inspect(reason)}"
+    end
+  end
+
   def get(%__MODULE__{} = client, uri) when is_binary(uri) do
     request_uri(client, :get, uri, type: :con)
   end
@@ -107,6 +153,57 @@ defmodule Macrina.Client do
   defp request_uri(client, method, uri, opts) do
     with {:ok, request} <- Request.from_uri(method, uri, opts) do
       request(client, request)
+    end
+  end
+
+  defp do_observe(pid, %Request{} = request, notify_to) when is_pid(notify_to) do
+    with {:ok, message} <- Request.to_message(request),
+         {:ok, response_message} <- call_server(pid, message),
+         {:ok, final_response_message} <-
+           maybe_collect_block2(pid, request, response_message, %{}),
+         response = Response.from_message(final_response_message),
+         observe when is_integer(observe) and observe >= 0 <- Response.observe(response),
+         subscription <- build_observe_subscription(pid, request, message, notify_to),
+         :ok <- Server.observe_subscribe(pid, subscription, observe) do
+      {:ok, subscription, response}
+    else
+      nil -> {:error, :observe_not_supported}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp build_observe_subscription(pid, %Request{} = request, %Message{} = message, notify_to) do
+    subscription_request = %Request{request | id: nil, token: message.token}
+
+    %Subscription{
+      connection: pid,
+      notify_to: notify_to,
+      path: request.path,
+      request: subscription_request,
+      token: message.token
+    }
+  end
+
+  defp observe_cancel_request(%Subscription{request: request, token: token}) do
+    options =
+      request.options
+      |> Enum.reject(fn {name, _value} -> name in ["Observe", "Block2"] end)
+
+    request
+    |> then(fn next_request ->
+      %Request{next_request | id: nil, options: options, token: token}
+    end)
+    |> Request.put_observe(1)
+  end
+
+  defp observe_metadata(%__MODULE__{ip: ip, port: port}, %Request{} = request) do
+    %{method: request.method, path: request.path, peer: %{ip: ip, port: port}}
+  end
+
+  defp put_initial_observe(%Request{} = request) do
+    case Request.observe(request) do
+      0 -> request
+      _other -> Request.put_observe(request, 0)
     end
   end
 
@@ -200,6 +297,10 @@ defmodule Macrina.Client do
   end
 
   defp telemetry_result_metadata({:ok, response}) do
+    %{code: response.code, status: :ok, type: response.type}
+  end
+
+  defp telemetry_result_metadata({:ok, _subscription, response}) do
     %{code: response.code, status: :ok, type: response.type}
   end
 
