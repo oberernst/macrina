@@ -65,15 +65,15 @@ defmodule Macrina.Connection.Server do
     execute_connection_event(state, [:stop], %{system_time: System.system_time()}, %{})
   end
 
-  defp reply_to_client(%Connection{callers: callers} = state, message) do
-    caller = Enum.find(callers, fn {t, _from} -> t == message.token end)
+  defp reply_to_client(%Connection{} = state, message) do
+    {caller, next_state} = pop_caller_for_token(state, message.token)
 
     unless is_nil(caller) do
       {_, from} = caller
       GenServer.reply(from, message)
     end
 
-    pop_caller(state, caller)
+    next_state
   end
 
   defp handle(%Connection{} = state, message) do
@@ -165,8 +165,7 @@ defmodule Macrina.Connection.Server do
     state
     |> handle(message)
     |> reply_to_client(message)
-    |> pop_id(message)
-    |> pop_token(message)
+    |> complete_request(message)
   end
 
   defp next_packet_state({:ok, %Message{} = message}, state, _last_token, _reply) do
@@ -263,12 +262,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp request_state(state, message, from) do
-    caller = {message.token, from}
-
-    state
-    |> push_caller(caller)
-    |> push_id(message)
-    |> push_token(message)
+    register_request(state, message, from)
   end
 
   defp connection_name(args, ip, port) do
@@ -277,7 +271,6 @@ defmodule Macrina.Connection.Server do
 
   defp connection_state(handler, ip, port, socket) do
     %Connection{
-      callers: [],
       exchange: %Macrina.Exchange{},
       handler: handler,
       ip: ip,

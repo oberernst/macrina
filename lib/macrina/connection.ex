@@ -1,10 +1,9 @@
 defmodule Macrina.Connection do
   alias Macrina.{Exchange, Handler, Message}
 
-  defstruct [:callers, :exchange, :handler, :ip, :name, :port, :socket]
+  defstruct [:exchange, :handler, :ip, :name, :port, :socket]
 
   @type t :: %__MODULE__{
-          callers: [{binary(), tuple()}],
           exchange: Exchange.t(),
           handler: Handler.t(),
           ip: tuple(),
@@ -13,8 +12,21 @@ defmodule Macrina.Connection do
           socket: port()
         }
 
-  def pop_caller(%__MODULE__{callers: callers} = state, caller) do
-    %__MODULE__{state | callers: List.delete(callers, caller)}
+  def complete_request(%__MODULE__{exchange: exchange} = state, %Message{} = message) do
+    next_exchange = Exchange.complete_request(exchange, message)
+    put_exchange(state, next_exchange)
+  end
+
+  def pop_caller(%__MODULE__{exchange: exchange} = state, caller) do
+    next_exchange = Exchange.pop_caller(exchange, caller)
+    put_exchange(state, next_exchange)
+  end
+
+  def pop_caller_for_token(%__MODULE__{exchange: exchange} = state, token) do
+    {caller, next_exchange} = Exchange.pop_caller_for_token(exchange, token)
+    next_state = put_exchange(state, next_exchange)
+
+    {caller, next_state}
   end
 
   def pop_id(%__MODULE__{exchange: exchange} = state, %Message{} = message) do
@@ -32,8 +44,9 @@ defmodule Macrina.Connection do
     put_exchange(state, next_exchange)
   end
 
-  def push_caller(%__MODULE__{callers: callers} = state, caller) do
-    %__MODULE__{state | callers: [caller | callers]}
+  def push_caller(%__MODULE__{exchange: exchange} = state, caller) do
+    next_exchange = Exchange.push_caller(exchange, caller)
+    put_exchange(state, next_exchange)
   end
 
   def push_id(%__MODULE__{exchange: exchange} = state, %Message{} = message) do
@@ -43,6 +56,11 @@ defmodule Macrina.Connection do
 
   def push_token(%__MODULE__{exchange: exchange} = state, %Message{} = message) do
     next_exchange = Exchange.push_token(exchange, message)
+    put_exchange(state, next_exchange)
+  end
+
+  def register_request(%__MODULE__{exchange: exchange} = state, %Message{} = message, from) do
+    next_exchange = Exchange.register_request(exchange, message, from)
     put_exchange(state, next_exchange)
   end
 

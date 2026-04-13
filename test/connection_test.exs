@@ -68,21 +68,26 @@ defmodule Macrina.ConnectionTest do
   test "connection wraps exchange state helpers" do
     state = %Connection{exchange: %Exchange{}}
     message = Message.build!(:get, id: 41, token: <<1, 2, 3, 4>>, type: :con)
+    from = {self(), make_ref()}
 
     next_state =
       state
-      |> Connection.push_id(message)
-      |> Connection.push_token(message)
+      |> Connection.register_request(message, from)
       |> Connection.set_last_reply(message.token, "reply")
 
+    assert next_state.exchange.callers == [{<<1, 2, 3, 4>>, from}]
     assert next_state.exchange.ids == [41]
     assert next_state.exchange.tokens == [<<1, 2, 3, 4>>]
     assert Connection.last_reply(next_state) == {<<1, 2, 3, 4>>, "reply"}
 
+    {caller, claimed_state} = Connection.pop_caller_for_token(next_state, message.token)
+
+    assert caller == {<<1, 2, 3, 4>>, from}
+    assert claimed_state.exchange.callers == []
+
     cleared_state =
-      next_state
-      |> Connection.pop_id(message)
-      |> Connection.pop_token(message)
+      claimed_state
+      |> Connection.complete_request(message)
       |> Connection.reset_blocks()
 
     assert cleared_state.exchange.ids == []

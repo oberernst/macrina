@@ -1,14 +1,32 @@
 defmodule Macrina.Exchange do
   alias Macrina.{Message, Message.Opts.Block, Telemetry}
 
-  defstruct blocks: %{}, ids: [], last_reply: {nil, nil}, tokens: []
+  defstruct blocks: %{}, callers: [], ids: [], last_reply: {nil, nil}, tokens: []
 
   @type t :: %__MODULE__{
           blocks: %{optional(non_neg_integer()) => binary()},
+          callers: [{binary(), tuple()}],
           ids: [non_neg_integer()],
           last_reply: {binary() | nil, binary() | nil},
           tokens: [binary()]
         }
+
+  def complete_request(%__MODULE__{} = exchange, %Message{} = message) do
+    exchange
+    |> pop_id(message)
+    |> pop_token(message)
+  end
+
+  def pop_caller(%__MODULE__{callers: callers} = exchange, caller) do
+    %__MODULE__{exchange | callers: List.delete(callers, caller)}
+  end
+
+  def pop_caller_for_token(%__MODULE__{} = exchange, token) when is_binary(token) do
+    caller = caller(exchange, token)
+    next_exchange = pop_caller(exchange, caller)
+
+    {caller, next_exchange}
+  end
 
   def pop_id(%__MODULE__{ids: ids} = exchange, %Message{id: id}) do
     %__MODULE__{exchange | ids: List.delete(ids, id)}
@@ -32,12 +50,25 @@ defmodule Macrina.Exchange do
     %__MODULE__{exchange | blocks: next_blocks}
   end
 
+  def push_caller(%__MODULE__{callers: callers} = exchange, caller) do
+    %__MODULE__{exchange | callers: [caller | callers]}
+  end
+
   def push_id(%__MODULE__{ids: ids} = exchange, %Message{id: id}) do
     %__MODULE__{exchange | ids: [id | ids]}
   end
 
   def push_token(%__MODULE__{tokens: tokens} = exchange, %Message{token: token}) do
     %__MODULE__{exchange | tokens: [token | tokens]}
+  end
+
+  def register_request(%__MODULE__{} = exchange, %Message{} = message, from) do
+    caller = {message.token, from}
+
+    exchange
+    |> push_caller(caller)
+    |> push_id(message)
+    |> push_token(message)
   end
 
   @spec read_blocks(t()) :: String.t() | nil
@@ -78,6 +109,10 @@ defmodule Macrina.Exchange do
 
   def last_reply(%__MODULE__{last_reply: last_reply}) do
     last_reply
+  end
+
+  def caller(%__MODULE__{callers: callers}, token) when is_binary(token) do
+    Enum.find(callers, fn {caller_token, _from} -> caller_token == token end)
   end
 
   defp emit_assembled_blocks(count, payload, sorted) do
