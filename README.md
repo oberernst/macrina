@@ -25,6 +25,16 @@ defp deps do
 end
 ```
 
+## Guides
+
+- [Getting Started](docs/guides/getting-started.md)
+- [Routing and Discovery](docs/guides/routing-and-discovery.md)
+- [Observe and Blockwise Transfers](docs/guides/observe-and-blockwise.md)
+- [Support Matrix](docs/support-matrix.md)
+- [Known Limitations](docs/known-limitations.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+
 ## Quick Start
 
 ### Server
@@ -209,7 +219,7 @@ Macrina.Response.location_path(response)   # => ["devices", "alpha"]
 
 ## Architecture
 
-```
+```text
 Macrina.Server / Macrina.Client
       │
 Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
@@ -227,7 +237,7 @@ after five minutes of inactivity.
 Key internal modules:
 
 | Module | Role |
-|---|---|
+| --- | --- |
 | `Macrina.Message` | Binary CoAP codec (encode/decode) |
 | `Macrina.Exchange` | Pure exchange state machine |
 | `Macrina.Connection` | Per-peer state struct |
@@ -240,7 +250,7 @@ Key internal modules:
 All events are prefixed with `[:macrina]`. Key events:
 
 | Event | Measurements | Description |
-|---|---|---|
+| --- | --- | --- |
 | `[:macrina, :connection, :start]` | `system_time` | Peer connection opened |
 | `[:macrina, :connection, :stop]` | `system_time` | Peer connection closed |
 | `[:macrina, :connection, :reply, :sent]` | `bytes` | Reply sent to peer |
