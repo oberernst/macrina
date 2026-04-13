@@ -5,52 +5,129 @@ defmodule Macrina.Client do
 
   def connect(opts) when is_list(opts), do: new(opts)
 
+  def connect!(opts) when is_list(opts) do
+    case connect(opts) do
+      {:ok, client} -> client
+      {:error, reason} -> raise ArgumentError, "invalid client options: #{inspect(reason)}"
+    end
+  end
+
   def new(opts) when is_list(opts) do
-    ip = Keyword.fetch!(opts, :ip)
-    port = Keyword.fetch!(opts, :port)
-    endpoint = Keyword.get(opts, :endpoint, Endpoint)
-    build(ip, port, endpoint)
+    with {:ok, ip} <- fetch_opt(opts, :ip),
+         {:ok, port} <- fetch_opt(opts, :port) do
+      endpoint = Keyword.get(opts, :endpoint, Endpoint)
+      build(ip, port, endpoint)
+    end
+  end
+
+  def new!(opts) when is_list(opts) do
+    case new(opts) do
+      {:ok, client} -> client
+      {:error, reason} -> raise ArgumentError, "invalid client options: #{inspect(reason)}"
+    end
   end
 
   def build(ip, port, endpoint \\ Endpoint) do
-    {:ok, socket} = Endpoint.socket(endpoint)
-    {:ok, handler} = Endpoint.handler(endpoint)
+    with {:ok, socket} <- Endpoint.socket(endpoint),
+         {:ok, handler} <- Endpoint.handler(endpoint),
+         {:ok, conn} <- start_connection(handler, ip, port, socket) do
+      client = %__MODULE__{conn: conn, ip: ip, port: port}
+      {:ok, client}
+    end
+  end
 
-    case Server.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
-      {:ok, conn} -> %__MODULE__{conn: conn, ip: ip, port: port}
-      {:error, {:already_started, conn}} -> %__MODULE__{conn: conn, ip: ip, port: port}
+  def build!(ip, port, endpoint \\ Endpoint) do
+    case build(ip, port, endpoint) do
+      {:ok, client} -> client
+      {:error, reason} -> raise ArgumentError, "failed to build client: #{inspect(reason)}"
     end
   end
 
   def request(%__MODULE__{conn: pid, ip: ip, port: port}, %Request{} = request) do
-    Telemetry.span(
-      [:client, :request],
-      %{method: request.method, path: request.path, peer: %{ip: ip, port: port}},
-      fn ->
-        response =
-          request
-          |> Request.to_message()
-          |> Server.call(pid)
-          |> Response.from_message()
+    metadata = %{method: request.method, path: request.path, peer: %{ip: ip, port: port}}
 
-        {response, %{code: response.code, type: response.type}}
-      end
-    )
+    Telemetry.span([:client, :request], metadata, fn ->
+      result = do_request(pid, request)
+      stop_metadata = telemetry_result_metadata(result)
+
+      {result, stop_metadata}
+    end)
+  end
+
+  def request!(%__MODULE__{} = client, %Request{} = request) do
+    case request(client, request) do
+      {:ok, response} -> response
+      {:error, reason} -> raise RuntimeError, "client request failed: #{inspect(reason)}"
+    end
   end
 
   def get(%__MODULE__{} = client, uri) when is_binary(uri) do
-    request(client, Request.from_uri(:get, uri, type: :con))
+    request_uri(client, :get, uri, type: :con)
   end
+
+  def get!(%__MODULE__{} = client, uri) when is_binary(uri),
+    do: request!(client, Request.from_uri!(:get, uri, type: :con))
 
   def post(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
-    request(client, Request.from_uri(:post, uri, payload: payload, type: :con))
+    request_uri(client, :post, uri, payload: payload, type: :con)
   end
+
+  def post!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri),
+    do: request!(client, Request.from_uri!(:post, uri, payload: payload, type: :con))
 
   def put(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
-    request(client, Request.from_uri(:put, uri, payload: payload, type: :con))
+    request_uri(client, :put, uri, payload: payload, type: :con)
   end
 
+  def put!(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri),
+    do: request!(client, Request.from_uri!(:put, uri, payload: payload, type: :con))
+
   def delete(%__MODULE__{} = client, uri) when is_binary(uri) do
-    request(client, Request.from_uri(:delete, uri, type: :con))
+    request_uri(client, :delete, uri, type: :con)
+  end
+
+  def delete!(%__MODULE__{} = client, uri) when is_binary(uri),
+    do: request!(client, Request.from_uri!(:delete, uri, type: :con))
+
+  defp request_uri(client, method, uri, opts) do
+    with {:ok, request} <- Request.from_uri(method, uri, opts) do
+      request(client, request)
+    end
+  end
+
+  defp do_request(pid, request) do
+    with {:ok, message} <- Request.to_message(request),
+         {:ok, response_message} <- call_server(pid, message) do
+      response = Response.from_message(response_message)
+      {:ok, response}
+    end
+  end
+
+  defp call_server(pid, message) do
+    if Process.alive?(pid) do
+      Server.call(pid, message)
+    else
+      {:error, {:connection_unavailable, pid}}
+    end
+  end
+
+  defp start_connection(handler, ip, port, socket) do
+    case Server.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
+      {:ok, conn} -> {:ok, conn}
+      {:error, {:already_started, conn}} -> {:ok, conn}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp telemetry_result_metadata({:ok, response}),
+    do: %{code: response.code, status: :ok, type: response.type}
+
+  defp telemetry_result_metadata({:error, reason}), do: %{error: reason, status: :error}
+
+  defp fetch_opt(opts, key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:missing_option, key}}
+    end
   end
 end

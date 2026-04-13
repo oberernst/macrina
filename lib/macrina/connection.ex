@@ -1,5 +1,5 @@
 defmodule Macrina.Connection do
-  alias Macrina.{Message, Message.Opts.Block}
+  alias Macrina.{Handler, Message, Message.Opts.Block}
   require Logger
 
   defstruct [:blocks, :callers, :last_reply, :handler, :ids, :ip, :name, :port, :socket, :tokens]
@@ -8,7 +8,7 @@ defmodule Macrina.Connection do
           blocks: %{},
           callers: [{binary(), tuple()}],
           last_reply: {binary(), binary()},
-          handler: module(),
+          handler: Handler.t(),
           ip: tuple(),
           name: String.t(),
           port: integer(),

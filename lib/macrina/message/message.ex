@@ -11,8 +11,23 @@ defmodule Macrina.Message do
           options: [{String.t(), String.t()}],
           payload: nil | String.t() | map(),
           token: String.t(),
-          type: :ack | :con | :non | :res
+          type: :ack | :con | :non | :rst
         }
+  @type decode_error ::
+          :bad_version
+          | :invalid_empty_message
+          | :invalid_token_length
+          | :malformed_message
+          | :unknown_code
+          | Binary.decode_error()
+  @type encode_error ::
+          :invalid_code
+          | :invalid_id
+          | :invalid_payload
+          | :invalid_token
+          | :invalid_token_length
+          | :invalid_type
+          | {:invalid_options, Binary.encode_error()}
 
   @max_block_size 1024
   @method_codes Codes.method_codes()
@@ -21,18 +36,22 @@ defmodule Macrina.Message do
 
   def build(code, opts \\ []) when is_atom(code) when code in @valid_codes do
     options = Keyword.get(opts, :options, [])
-    control_block_in_opts = control_block(code, options)
-    descriptive_block_in_opts = descriptive_block(code, options)
+    control_block = Keyword.get(opts, :control_block, control_block(code, options))
+    descriptive_block = Keyword.get(opts, :descriptive_block, descriptive_block(code, options))
+    id = Keyword.get(opts, :id, Enum.random(10000..19999))
+    payload = Keyword.get(opts, :payload, <<>>)
+    token = Keyword.get(opts, :token, :crypto.strong_rand_bytes(4))
+    type = Keyword.get(opts, :type, :non)
 
     %__MODULE__{
       code: code,
-      control_block: Keyword.get(opts, :control_block, control_block_in_opts),
-      descriptive_block: Keyword.get(opts, :descriptive_block, descriptive_block_in_opts),
-      id: Keyword.get(opts, :id, Enum.random(10000..19999)),
-      options: Keyword.get(opts, :options, []),
-      payload: Keyword.get(opts, :payload, <<>>),
-      token: Keyword.get(opts, :token, :crypto.strong_rand_bytes(4)),
-      type: Keyword.get(opts, :type, :non)
+      control_block: control_block,
+      descriptive_block: descriptive_block,
+      id: id,
+      options: options,
+      payload: payload,
+      token: token,
+      type: type
     }
   end
 
@@ -49,29 +68,18 @@ defmodule Macrina.Message do
     options = Keyword.get(params, :options, [])
     code = Keyword.get(params, :code, :content)
 
-    payload_size = byte_size(payload)
-    offset = b.number * b.size
+    {response_code, response_options, response_payload} =
+      response_block_parts(b, code, options, payload)
 
-    {code, options, payload} =
-      cond do
-        payload_size < offset ->
-          {:bad_request, options, <<>>}
+    response_opts =
+      Keyword.merge(params,
+        id: msg.id,
+        options: response_options,
+        payload: response_payload,
+        token: msg.token
+      )
 
-        payload_size > (b.number + 1) * b.size ->
-          part = :binary.part(payload, offset, b.size)
-          block = %Block{number: b.number, more: true, size: b.size}
-          {code, [{"Block2", block} | options], part}
-
-        true ->
-          part = :binary.part(payload, offset, payload_size - offset)
-          block = %Block{number: b.number, more: false, size: b.size}
-          {code, [{"Block2", block} | options], part}
-      end
-
-    new_params =
-      Keyword.merge(params, id: msg.id, options: options, payload: payload, token: msg.token)
-
-    build(code, new_params)
+    build(response_code, response_opts)
   end
 
   def response(%__MODULE__{id: id, token: token}, opts) do
@@ -110,31 +118,29 @@ defmodule Macrina.Message do
       }}
 
   """
-  @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
+  @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, decode_error()}
+  def decode(<<version::2, _rest::bits>>) when version != 1 do
+    {:error, :bad_version}
+  end
+
+  def decode(<<1::2, _type::2, token_length::4, _rest::binary>>) when token_length > 8 do
+    {:error, :invalid_token_length}
+  end
+
   def decode(
-        <<version::2, type::2, token_length::4, code_class::3, code_detail::5, id::16,
+        <<1::2, type::2, token_length::4, code_class::3, code_detail::5, id::16,
           token::binary-size(token_length), rest::binary>>
-      )
-      when version == 1 do
-    {options, payload} = Binary.decode(rest)
-    code = Codes.parse(code_class, code_detail)
-
-    message = %__MODULE__{
-      control_block: control_block(code, options),
-      descriptive_block: descriptive_block(code, options),
-      code: Codes.parse(code_class, code_detail),
-      id: id,
-      options: options,
-      payload: payload,
-      token: token,
-      type: Types.parse(type)
-    }
-
-    {:ok, message}
+      ) do
+    with {:ok, {options, payload}} <- Binary.decode(rest),
+         {:ok, code} <- decode_code(code_class, code_detail),
+         {:ok, decoded_type} <- decode_type(type),
+         {:ok, message} <- decode_message(code, id, options, payload, token, decoded_type) do
+      {:ok, message}
+    end
   end
 
   def decode(_request) do
-    {:error, :bad_version}
+    {:error, :malformed_message}
   end
 
   @doc """
@@ -151,7 +157,7 @@ defmodule Macrina.Message do
       iex>   code: :put
       iex> }
       iex> Macrina.Message.encode(message)
-      <<0x44, 0x03, 0x31, 0xfc, 0x7b, 0x5c, 0xd3, 0xde, 0xb8, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x49, 0x77, 0x68, 0x6f, 0x3d, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0xff, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64>>
+      {:ok, <<0x44, 0x03, 0x31, 0xfc, 0x7b, 0x5c, 0xd3, 0xde, 0xb8, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x49, 0x77, 0x68, 0x6f, 0x3d, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0xff, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64>>}
 
       iex> message = %Macrina.Message{
       iex>   id: Enum.random(10000..19999),
@@ -161,16 +167,21 @@ defmodule Macrina.Message do
       iex>   type: :non,
       iex>   code: :get
       iex> }
-      iex> bin = Macrina.Message.encode(message)
+      iex> {:ok, bin} = Macrina.Message.encode(message)
       iex> {:ok, decoded} = Macrina.Message.decode(bin)
       iex> decoded
       message
 
   """
-  @spec encode(t()) :: binary()
-  def encode(%__MODULE__{code: :empty, id: id, token: token}) do
-    <<1::size(2), 2::size(2), byte_size(token)::size(4), 0::size(3), 0::size(5), id::size(16),
-      token::binary, 0::size(0)>>
+  @spec encode(t()) :: {:ok, binary()} | {:error, encode_error()}
+  def encode(%__MODULE__{code: :empty, id: id, type: type}) do
+    with :ok <- validate_id(id),
+         {:ok, encoded_type} <- encode_empty_type(type) do
+      encoded_message =
+        <<1::size(2), encoded_type::size(2), 0::size(4), 0::size(3), 0::size(5), id::size(16)>>
+
+      {:ok, encoded_message}
+    end
   end
 
   def encode(%__MODULE__{
@@ -181,10 +192,151 @@ defmodule Macrina.Message do
         token: token,
         type: type
       }) do
-    {c, dd} = Codes.parse(code)
+    with :ok <- validate_id(id),
+         :ok <- validate_token(token),
+         {:ok, encoded_type} <- encode_type(type),
+         {:ok, {code_class, code_detail}} <- encode_code(code),
+         {:ok, options_bin} <- encode_options(options),
+         {:ok, payload_bin} <- encode_payload(payload) do
+      encoded_message =
+        <<1::size(2), encoded_type::size(2), byte_size(token)::size(4), code_class::size(3),
+          code_detail::size(5), id::size(16), token::binary, options_bin::binary,
+          payload_bin::binary>>
 
-    <<1::size(2), Types.parse(type)::size(2), byte_size(token)::size(4), c::size(3), dd::size(5),
-      id::size(16), token::binary, Binary.encode(options)::binary, 255, payload::binary>>
+      {:ok, encoded_message}
+    end
+  end
+
+  def encode!(%__MODULE__{} = message) do
+    case encode(message) do
+      {:ok, encoded_message} -> encoded_message
+      {:error, reason} -> raise ArgumentError, "invalid CoAP message: #{inspect(reason)}"
+    end
+  end
+
+  defp decode_message(:empty, id, [], <<>>, <<>>, type) when type in [:ack, :rst] do
+    message = %__MODULE__{
+      control_block: nil,
+      descriptive_block: nil,
+      code: :empty,
+      id: id,
+      options: [],
+      payload: <<>>,
+      token: <<>>,
+      type: type
+    }
+
+    {:ok, message}
+  end
+
+  defp decode_message(:empty, _id, _options, _payload, _token, _type) do
+    {:error, :invalid_empty_message}
+  end
+
+  defp decode_message(code, id, options, payload, token, type) do
+    control_block = control_block(code, options)
+    descriptive_block = descriptive_block(code, options)
+
+    message = %__MODULE__{
+      control_block: control_block,
+      descriptive_block: descriptive_block,
+      code: code,
+      id: id,
+      options: options,
+      payload: payload,
+      token: token,
+      type: type
+    }
+
+    {:ok, message}
+  end
+
+  defp decode_code(code_class, code_detail) do
+    case Codes.decode(code_class, code_detail) do
+      {:ok, code} -> {:ok, code}
+      :error -> {:error, :unknown_code}
+    end
+  end
+
+  defp decode_type(type) do
+    decoded_type = Types.parse(type)
+    {:ok, decoded_type}
+  end
+
+  defp encode_code(code) do
+    case Codes.encode(code) do
+      {:ok, encoded_code} -> {:ok, encoded_code}
+      :error -> {:error, :invalid_code}
+    end
+  end
+
+  defp encode_empty_type(type) do
+    case encode_type(type) do
+      {:ok, 3} -> {:ok, 3}
+      {:ok, _encoded_type} -> {:ok, 2}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp encode_type(type) do
+    case Types.encode(type) do
+      {:ok, encoded_type} -> {:ok, encoded_type}
+      :error -> {:error, :invalid_type}
+    end
+  end
+
+  defp encode_options(options) when is_list(options) do
+    case Binary.encode(options) do
+      {:ok, options_bin} -> {:ok, options_bin}
+      {:error, reason} -> {:error, {:invalid_options, reason}}
+    end
+  end
+
+  defp encode_options(_options) do
+    {:error, {:invalid_options, :invalid_options}}
+  end
+
+  defp encode_payload(nil), do: {:ok, <<>>}
+  defp encode_payload(<<>>), do: {:ok, <<>>}
+
+  defp encode_payload(payload) when is_binary(payload) do
+    encoded_payload = <<255, payload::binary>>
+    {:ok, encoded_payload}
+  end
+
+  defp encode_payload(_payload) do
+    {:error, :invalid_payload}
+  end
+
+  defp validate_id(id) when is_integer(id) and id >= 0 and id <= 65_535, do: :ok
+  defp validate_id(_id), do: {:error, :invalid_id}
+
+  defp validate_token(token) when not is_binary(token), do: {:error, :invalid_token}
+  defp validate_token(token) when byte_size(token) > 8, do: {:error, :invalid_token_length}
+  defp validate_token(_token), do: :ok
+
+  defp response_block_parts(block, code, options, payload) do
+    payload_size = byte_size(payload)
+    offset = block.number * block.size
+
+    cond do
+      payload_size < offset ->
+        {:bad_request, options, <<>>}
+
+      payload_size > (block.number + 1) * block.size ->
+        block_payload = :binary.part(payload, offset, block.size)
+        response_block = %Block{number: block.number, more: true, size: block.size}
+        response_options = [{"Block2", response_block} | options]
+
+        {code, response_options, block_payload}
+
+      true ->
+        block_payload = :binary.part(payload, offset, payload_size - offset)
+        response_block = %Block{number: block.number, more: false, size: block.size}
+        response_options = [{"Block2", response_block} | options]
+
+        {code, response_options, block_payload}
+    end
   end
 
   @spec control_block(atom(), keyword()) :: Block.t() | nil

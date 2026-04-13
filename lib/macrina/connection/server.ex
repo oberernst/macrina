@@ -1,6 +1,6 @@
 defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
-  alias Macrina.{Connection, Message, Message.Opts.Block}
+  alias Macrina.{Connection, Handler, Message, Message.Opts.Block}
   import Connection, only: :functions
   require Logger
 
@@ -9,25 +9,15 @@ defmodule Macrina.Connection.Server do
   # ------------------------------------------- Client ------------------------------------------- #
 
   def start_link(args) do
-    handler = Keyword.fetch!(args, :handler)
-    ip = Keyword.fetch!(args, :ip)
-    port = Keyword.fetch!(args, :port)
-    socket = Keyword.fetch!(args, :socket)
-    name = Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
+    with {:ok, handler} <- fetch_opt(args, :handler),
+         {:ok, ip} <- fetch_opt(args, :ip),
+         {:ok, port} <- fetch_opt(args, :port),
+         {:ok, socket} <- fetch_opt(args, :socket) do
+      name = connection_name(args, ip, port)
+      state = connection_state(handler, ip, port, socket)
 
-    state = %Connection{
-      blocks: %{},
-      callers: [],
-      handler: handler,
-      ids: [],
-      ip: ip,
-      last_reply: {nil, nil},
-      port: port,
-      tokens: [],
-      socket: socket
-    }
-
-    GenServer.start_link(__MODULE__, state, name: name)
+      GenServer.start_link(__MODULE__, state, name: name)
+    end
   end
 
   def call(pid, message, timeout \\ 2000) do
@@ -42,111 +32,27 @@ defmodule Macrina.Connection.Server do
   end
 
   def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
-    bin = Message.encode(message)
-    :gen_udp.send(state.socket, {state.ip, state.port}, bin)
+    case Message.encode(message) do
+      {:ok, packet} ->
+        next_state = request_state(state, message, from)
 
-    {:noreply,
-     state
-     |> push_caller({message.token, from})
-     |> push_id(message)
-     |> push_token(message), @timeout}
+        :gen_udp.send(state.socket, {state.ip, state.port}, packet)
+
+        {:noreply, next_state, @timeout}
+
+      {:error, reason} ->
+        error = {:encode_failed, reason}
+        GenServer.reply(from, {:error, error})
+
+        {:noreply, state, @timeout}
+    end
   end
 
   def handle_info({:coap, packet}, %Connection{last_reply: {last_token, reply}} = state) do
-    case Message.decode(packet) do
-      # a multi-part upload is ongoing, add the block to existing block map,
-      # reply to the remote client, then pass this message to any local clients
-      # who may be waiting for it
-      {:ok, %Message{descriptive_block: %Block{more: true}} = message} ->
-        Logger.info("#{__MODULE__}.handle_info/2 continuing block transfer",
-          conn: inspect(state),
-          request: inspect(message)
-        )
+    decoded = Message.decode(packet)
+    next_state = next_packet_state(decoded, state, last_token, reply)
 
-        {:noreply,
-         state
-         |> push_block(message)
-         |> handle(message, :continue)
-         |> reply_to_client(message), @timeout}
-
-      # a multi-part upload is supposedly finished:
-      # - if we already replied to this message, send that
-      # - if the upload is incomplete, send `:request_entity_incomplete` response and reset blocks
-      # - if the upload *is* complete, send the application's response and reset blocks
-      # - finally, always reply to any clients that may have been waiting for this message
-      {:ok, %Message{descriptive_block: %Block{more: false}} = message} ->
-        payload = state |> push_block(message) |> read_blocks()
-
-        state =
-          cond do
-            message.token == last_token ->
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 resending cached reply for completed block transfer",
-                conn: inspect(state),
-                request: inspect(message)
-              )
-
-              if reply, do: Connection.reply(state, reply)
-              reply_to_client(state, message)
-
-            is_nil(payload) ->
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 incomplete block transfer",
-                conn: inspect(state),
-                request: inspect(message)
-              )
-
-              bin =
-                message
-                |> Message.response(code: :request_entity_incomplete, type: :ack)
-                |> Message.encode()
-
-              Connection.reply(state, bin)
-
-              state
-              |> set_last_reply(message.token, bin)
-              |> reset_blocks()
-              |> reply_to_client(message)
-
-            true ->
-              full_message = %Message{message | payload: payload}
-
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 completed block transfer",
-                conn: inspect(state),
-                request: inspect(full_message)
-              )
-
-              state
-              |> handle(full_message)
-              |> reset_blocks()
-              |> reply_to_client(full_message)
-          end
-
-        {:noreply, state, @timeout}
-
-      # a single-datagram message was received but its token was already
-      # replied to, so resend the cached reply
-      {:ok, %Message{token: token} = message} when token == last_token ->
-        if reply, do: Connection.reply(state, reply)
-        reply_to_client(state, message)
-        {:noreply, state, @timeout}
-
-      {:ok, %Message{type: type} = message} when type in [:ack, :res] ->
-        {:noreply,
-         state
-         |> handle(message)
-         |> reply_to_client(message)
-         |> pop_id(message)
-         |> pop_token(message), @timeout}
-
-      {:ok, %Message{} = message} ->
-        {:noreply, state |> handle(message) |> reply_to_client(message), @timeout}
-
-      _ ->
-        Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
-        {:noreply, state, @timeout}
-    end
+    {:noreply, next_state, @timeout}
   end
 
   def handle_info(:timeout, state) do
@@ -169,17 +75,28 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle(%Connection{} = state, message) do
-    if reply = state.handler.call(state, message) do
-      bin = Message.encode(reply)
+    if reply = Handler.call(state.handler, state, message) do
+      case Message.encode(reply) do
+        {:ok, bin} ->
+          Logger.info("#{__MODULE__}.handle/2 encoding and replying",
+            conn: inspect(state),
+            request: inspect(message),
+            response: %{encoded: Base.encode64(bin), raw: reply}
+          )
 
-      Logger.info("#{__MODULE__}.handle/2 encoding and replying",
-        conn: inspect(state),
-        request: inspect(message),
-        response: %{encoded: Base.encode64(bin), raw: reply}
-      )
+          Connection.reply(state, bin)
+          set_last_reply(state, message.token, bin)
 
-      Connection.reply(state, bin)
-      set_last_reply(state, message.token, bin)
+        {:error, reason} ->
+          Logger.error("#{__MODULE__}.handle/2 failed to encode reply",
+            conn: inspect(state),
+            reason: inspect(reason),
+            request: inspect(message),
+            response: inspect(reply)
+          )
+
+          set_last_reply(state, message.token, nil)
+      end
     else
       Logger.info("#{__MODULE__}.handle/2 did not reply",
         conn: inspect(state),
@@ -191,17 +108,191 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle(%Connection{} = state, message, :continue) do
-    bin =
-      message
-      |> Message.response(code: :continue, type: :ack)
-      |> Message.encode()
+    continue_message = Message.response(message, code: :continue, type: :ack)
 
-    Logger.info("#{__MODULE__}.handle/3 continuing",
+    case Message.encode(continue_message) do
+      {:ok, bin} ->
+        Logger.info("#{__MODULE__}.handle/3 continuing",
+          conn: inspect(state),
+          request: inspect(message)
+        )
+
+        Connection.reply(state, bin)
+        state
+
+      {:error, reason} ->
+        Logger.error("#{__MODULE__}.handle/3 failed to encode continue reply",
+          conn: inspect(state),
+          reason: inspect(reason),
+          request: inspect(message)
+        )
+
+        state
+    end
+  end
+
+  defp next_packet_state(
+         {:ok, %Message{descriptive_block: %Block{more: true}} = message},
+         state,
+         _last_token,
+         _reply
+       ) do
+    log_continue(state, message)
+
+    state
+    |> push_block(message)
+    |> handle(message, :continue)
+    |> reply_to_client(message)
+  end
+
+  defp next_packet_state(
+         {:ok, %Message{descriptive_block: %Block{more: false}} = message},
+         state,
+         last_token,
+         reply
+       ) do
+    block_state = push_block(state, message)
+    payload = read_blocks(block_state)
+
+    completed_block_state(block_state, message, payload, last_token, reply)
+  end
+
+  defp next_packet_state({:ok, %Message{token: token} = message}, state, token, reply) do
+    resend_cached_reply(state, reply, message)
+  end
+
+  defp next_packet_state({:ok, %Message{type: type} = message}, state, _last_token, _reply)
+       when type in [:ack, :rst] do
+    state
+    |> handle(message)
+    |> reply_to_client(message)
+    |> pop_id(message)
+    |> pop_token(message)
+  end
+
+  defp next_packet_state({:ok, %Message{} = message}, state, _last_token, _reply) do
+    state
+    |> handle(message)
+    |> reply_to_client(message)
+  end
+
+  defp next_packet_state(_decoded, state, _last_token, _reply) do
+    Logger.error("CoAP decoding failed")
+    state
+  end
+
+  defp completed_block_state(state, message, payload, last_token, reply) do
+    cond do
+      message.token == last_token ->
+        log_resend_completed(state, message)
+        resend_cached_reply(state, reply, message)
+
+      is_nil(payload) ->
+        log_incomplete_transfer(state, message)
+        reply_incomplete_transfer(state, message)
+
+      true ->
+        full_message = %Message{message | payload: payload}
+
+        Logger.info("#{__MODULE__}.handle_info/2 completed block transfer",
+          conn: inspect(state),
+          request: inspect(full_message)
+        )
+
+        state
+        |> handle(full_message)
+        |> reset_blocks()
+        |> reply_to_client(full_message)
+    end
+  end
+
+  defp reply_incomplete_transfer(state, message) do
+    reply = incomplete_transfer_reply(message)
+
+    case Message.encode(reply) do
+      {:ok, encoded_reply} ->
+        Connection.reply(state, encoded_reply)
+
+        state
+        |> set_last_reply(message.token, encoded_reply)
+        |> reset_blocks()
+        |> reply_to_client(message)
+
+      {:error, reason} ->
+        Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to encode reply",
+          conn: inspect(state),
+          reason: inspect(reason),
+          request: inspect(message)
+        )
+
+        state
+        |> reset_blocks()
+        |> reply_to_client(message)
+    end
+  end
+
+  defp incomplete_transfer_reply(message) do
+    Message.response(message, code: :request_entity_incomplete, type: :ack)
+  end
+
+  defp resend_cached_reply(state, reply, message) do
+    if reply, do: Connection.reply(state, reply)
+
+    reply_to_client(state, message)
+  end
+
+  defp request_state(state, message, from) do
+    caller = {message.token, from}
+
+    state
+    |> push_caller(caller)
+    |> push_id(message)
+    |> push_token(message)
+  end
+
+  defp connection_name(args, ip, port) do
+    Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
+  end
+
+  defp connection_state(handler, ip, port, socket) do
+    %Connection{
+      blocks: %{},
+      callers: [],
+      handler: handler,
+      ids: [],
+      ip: ip,
+      last_reply: {nil, nil},
+      port: port,
+      tokens: [],
+      socket: socket
+    }
+  end
+
+  defp log_continue(state, message) do
+    Logger.info("#{__MODULE__}.handle_info/2 continuing block transfer",
       conn: inspect(state),
       request: inspect(message)
     )
+  end
 
-    Connection.reply(state, bin)
-    state
+  defp log_resend_completed(state, message) do
+    Logger.info("#{__MODULE__}.handle_info/2 resending cached reply for completed block transfer",
+      conn: inspect(state),
+      request: inspect(message)
+    )
+  end
+
+  defp log_incomplete_transfer(state, message) do
+    Logger.info("#{__MODULE__}.handle_info/2 incomplete block transfer",
+      conn: inspect(state),
+      request: inspect(message)
+    )
+  end
+
+  defp fetch_opt(args, key) do
+    case Keyword.fetch(args, key) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:missing_option, key}}
+    end
   end
 end

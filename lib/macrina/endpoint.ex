@@ -7,24 +7,41 @@ defmodule Macrina.Endpoint do
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
   def start_link(args) do
-    handler = Keyword.fetch!(args, :handler)
-    name = Keyword.get(args, :name, __MODULE__)
-    port = Keyword.fetch!(args, :port)
-    GenServer.start_link(__MODULE__, {handler, port}, name: name)
+    with {:ok, handler} <- fetch_opt(args, :handler),
+         {:ok, port} <- fetch_opt(args, :port) do
+      name = Keyword.get(args, :name, __MODULE__)
+      GenServer.start_link(__MODULE__, {handler, port}, name: name)
+    end
+  end
+
+  def start_link!(args) do
+    case start_link(args) do
+      {:ok, pid} ->
+        pid
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid endpoint start options: #{inspect(reason)}"
+    end
   end
 
   def init({handler, port}) do
-    {:ok, socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
-    Telemetry.execute([:endpoint, :start], %{system_time: System.system_time()}, %{port: port})
-    {:ok, %__MODULE__{handler: handler, socket: socket}}
+    case :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}]) do
+      {:ok, socket} ->
+        Telemetry.execute([:endpoint, :start], %{system_time: System.system_time()}, %{port: port})
+
+        {:ok, %__MODULE__{handler: handler, socket: socket}}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   def handler(endpoint \\ __MODULE__) do
-    GenServer.call(endpoint, :handler)
+    safe_call(endpoint, :handler)
   end
 
   def socket(endpoint \\ __MODULE__) do
-    GenServer.call(endpoint, :socket)
+    safe_call(endpoint, :socket)
   end
 
   # ------------------------------------------- SERVER ------------------------------------------- #
@@ -68,5 +85,19 @@ defmodule Macrina.Endpoint do
     end
 
     {:noreply, state}
+  end
+
+  defp fetch_opt(args, key) do
+    case Keyword.fetch(args, key) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:missing_option, key}}
+    end
+  end
+
+  defp safe_call(endpoint, message) do
+    case GenServer.whereis(endpoint) do
+      nil -> {:error, {:endpoint_unavailable, endpoint}}
+      _pid -> GenServer.call(endpoint, message)
+    end
   end
 end
