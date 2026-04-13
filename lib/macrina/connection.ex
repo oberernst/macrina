@@ -1,6 +1,5 @@
 defmodule Macrina.Connection do
-  alias Macrina.{Handler, Message, Message.Opts.Block}
-  require Logger
+  alias Macrina.{Handler, Message, Message.Opts.Block, Telemetry}
 
   defstruct [:blocks, :callers, :last_reply, :handler, :ids, :ip, :name, :port, :socket, :tokens]
 
@@ -33,12 +32,10 @@ defmodule Macrina.Connection do
       }) do
     blocks = Map.put(blocks, num, payload)
 
-    Logger.info("#{__MODULE__}.push_block/2 adding block #{num}",
-      blocks: blocks,
-      size: size,
-      more: more,
-      payload_len: byte_size(payload)
-    )
+    measurements = %{block_number: num, block_size: size, bytes: byte_size(payload)}
+    metadata = %{more: more}
+
+    Telemetry.execute([:connection, :block, :received], measurements, metadata)
 
     %__MODULE__{state | blocks: blocks}
   end
@@ -56,13 +53,8 @@ defmodule Macrina.Connection do
   end
 
   @spec read_blocks(t()) :: String.t() | nil
-  def read_blocks(%__MODULE__{blocks: blocks} = state) do
+  def read_blocks(%__MODULE__{blocks: blocks}) do
     sorted = Enum.sort_by(blocks, &elem(&1, 0), :asc)
-
-    Logger.debug("#{__MODULE__}.read_blocks/1 sorted blocks",
-      keys: Enum.map(sorted, fn {k, _} -> k end),
-      sorted: sorted
-    )
 
     {missing, valid?} =
       Enum.reduce_while(sorted, {-1, true}, fn {num, _}, {last_num, _} ->
@@ -88,18 +80,17 @@ defmodule Macrina.Connection do
           _ -> elem(List.last(sorted), 0)
         end
 
-      Logger.info("#{__MODULE__}.read_blocks/1 assembled payload",
-        first: first,
-        last: last,
-        payload_len: byte_size(payload)
-      )
+      measurements = %{bytes: byte_size(payload), count: length(sorted)}
+      metadata = %{first_block: first, last_block: last}
+
+      Telemetry.execute([:connection, :block, :assembled], measurements, metadata)
 
       payload
     else
-      Logger.warn("#{__MODULE__}.read_blocks/1 missing at least block #{missing}",
-        state: state,
-        sorted: sorted
-      )
+      measurements = %{count: 1}
+      metadata = %{missing_block: missing, received_blocks: length(sorted)}
+
+      Telemetry.execute([:connection, :block, :missing], measurements, metadata)
 
       nil
     end

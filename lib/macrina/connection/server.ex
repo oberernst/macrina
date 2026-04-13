@@ -1,8 +1,7 @@
 defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
-  alias Macrina.{Connection, Handler, Message, Message.Opts.Block}
+  alias Macrina.{Connection, Handler, Message, Message.Opts.Block, Telemetry}
   import Connection, only: :functions
-  require Logger
 
   @timeout :timer.minutes(5)
 
@@ -27,7 +26,7 @@ defmodule Macrina.Connection.Server do
   # ------------------------------------------- Server ------------------------------------------- #
 
   def init(state) do
-    Logger.info("Macrina connection started", state: inspect(state))
+    execute_connection_event(state, [:start], %{system_time: System.system_time()}, %{})
     {:ok, state, @timeout}
   end
 
@@ -41,6 +40,8 @@ defmodule Macrina.Connection.Server do
         {:noreply, next_state, @timeout}
 
       {:error, reason} ->
+        execute_connection_event(state, [:request, :encode, :error], %{count: 1}, %{error: reason})
+
         error = {:encode_failed, reason}
         GenServer.reply(from, {:error, error})
 
@@ -60,7 +61,7 @@ defmodule Macrina.Connection.Server do
   end
 
   def terminate(:normal, state) do
-    Logger.info("Connection server shutting down", server: Macrina.conn_name(state.ip, state.port))
+    execute_connection_event(state, [:stop], %{system_time: System.system_time()}, %{})
   end
 
   defp reply_to_client(%Connection{callers: callers} = state, message) do
@@ -78,30 +79,19 @@ defmodule Macrina.Connection.Server do
     if reply = Handler.call(state.handler, state, message) do
       case Message.encode(reply) do
         {:ok, bin} ->
-          Logger.info("#{__MODULE__}.handle/2 encoding and replying",
-            conn: inspect(state),
-            request: inspect(message),
-            response: %{encoded: Base.encode64(bin), raw: reply}
-          )
-
-          Connection.reply(state, bin)
+          send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
           set_last_reply(state, message.token, bin)
 
         {:error, reason} ->
-          Logger.error("#{__MODULE__}.handle/2 failed to encode reply",
-            conn: inspect(state),
-            reason: inspect(reason),
-            request: inspect(message),
-            response: inspect(reply)
-          )
+          execute_connection_event(state, [:reply, :encode, :error], %{count: 1}, %{
+            error: reason,
+            stage: :handler
+          })
 
           set_last_reply(state, message.token, nil)
       end
     else
-      Logger.info("#{__MODULE__}.handle/2 did not reply",
-        conn: inspect(state),
-        request: inspect(message)
-      )
+      execute_connection_event(state, [:reply, :skipped], %{count: 1}, %{stage: :handler})
 
       set_last_reply(state, message.token, nil)
     end
@@ -112,30 +102,28 @@ defmodule Macrina.Connection.Server do
       {:ok, continue_message} ->
         case Message.encode(continue_message) do
           {:ok, bin} ->
-            Logger.info("#{__MODULE__}.handle/3 continuing",
-              conn: inspect(state),
-              request: inspect(message)
-            )
+            send_reply(state, bin, %{
+              code: continue_message.code,
+              stage: :continue,
+              type: continue_message.type
+            })
 
-            Connection.reply(state, bin)
             state
 
           {:error, reason} ->
-            Logger.error("#{__MODULE__}.handle/3 failed to encode continue reply",
-              conn: inspect(state),
-              reason: inspect(reason),
-              request: inspect(message)
-            )
+            execute_connection_event(state, [:reply, :encode, :error], %{count: 1}, %{
+              error: reason,
+              stage: :continue
+            })
 
             state
         end
 
       {:error, reason} ->
-        Logger.error("#{__MODULE__}.handle/3 failed to build continue reply",
-          conn: inspect(state),
-          reason: inspect(reason),
-          request: inspect(message)
-        )
+        execute_connection_event(state, [:reply, :build, :error], %{count: 1}, %{
+          error: reason,
+          stage: :continue
+        })
 
         state
     end
@@ -187,7 +175,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp next_packet_state(_decoded, state, _last_token, _reply) do
-    Logger.error("CoAP decoding failed")
+    execute_connection_event(state, [:decode, :error], %{count: 1}, %{})
     state
   end
 
@@ -204,9 +192,11 @@ defmodule Macrina.Connection.Server do
       true ->
         full_message = %Message{message | payload: payload}
 
-        Logger.info("#{__MODULE__}.handle_info/2 completed block transfer",
-          conn: inspect(state),
-          request: inspect(full_message)
+        execute_connection_event(
+          state,
+          [:block, :completed],
+          %{bytes: byte_size(payload), count: 1},
+          %{code: full_message.code, type: full_message.type}
         )
 
         state
@@ -221,7 +211,11 @@ defmodule Macrina.Connection.Server do
       {:ok, reply} ->
         case Message.encode(reply) do
           {:ok, encoded_reply} ->
-            Connection.reply(state, encoded_reply)
+            send_reply(state, encoded_reply, %{
+              code: reply.code,
+              stage: :incomplete_transfer,
+              type: reply.type
+            })
 
             state
             |> set_last_reply(message.token, encoded_reply)
@@ -229,10 +223,11 @@ defmodule Macrina.Connection.Server do
             |> reply_to_client(message)
 
           {:error, reason} ->
-            Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to encode reply",
-              conn: inspect(state),
-              reason: inspect(reason),
-              request: inspect(message)
+            execute_connection_event(
+              state,
+              [:reply, :encode, :error],
+              %{count: 1},
+              %{error: reason, stage: :incomplete_transfer}
             )
 
             state
@@ -241,10 +236,11 @@ defmodule Macrina.Connection.Server do
         end
 
       {:error, reason} ->
-        Logger.error("#{__MODULE__}.reply_incomplete_transfer/2 failed to build reply",
-          conn: inspect(state),
-          reason: inspect(reason),
-          request: inspect(message)
+        execute_connection_event(
+          state,
+          [:reply, :build, :error],
+          %{count: 1},
+          %{error: reason, stage: :incomplete_transfer}
         )
 
         state
@@ -258,7 +254,9 @@ defmodule Macrina.Connection.Server do
   end
 
   defp resend_cached_reply(state, reply, message) do
-    if reply, do: Connection.reply(state, reply)
+    if reply do
+      send_reply(state, reply, %{cached: true, stage: :resend})
+    end
 
     reply_to_client(state, message)
   end
@@ -291,24 +289,47 @@ defmodule Macrina.Connection.Server do
   end
 
   defp log_continue(state, message) do
-    Logger.info("#{__MODULE__}.handle_info/2 continuing block transfer",
-      conn: inspect(state),
-      request: inspect(message)
-    )
+    measurements = %{
+      block_number: message.descriptive_block.number,
+      block_size: message.descriptive_block.size,
+      count: 1
+    }
+
+    metadata = %{code: message.code, more: true, type: message.type}
+
+    execute_connection_event(state, [:block, :continue], measurements, metadata)
   end
 
   defp log_resend_completed(state, message) do
-    Logger.info("#{__MODULE__}.handle_info/2 resending cached reply for completed block transfer",
-      conn: inspect(state),
-      request: inspect(message)
-    )
+    measurements = %{count: 1}
+    metadata = %{code: message.code, stage: :completed_transfer, type: message.type}
+
+    execute_connection_event(state, [:reply, :resent], measurements, metadata)
   end
 
   defp log_incomplete_transfer(state, message) do
-    Logger.info("#{__MODULE__}.handle_info/2 incomplete block transfer",
-      conn: inspect(state),
-      request: inspect(message)
-    )
+    measurements = %{count: 1}
+    metadata = %{code: message.code, type: message.type}
+
+    execute_connection_event(state, [:block, :incomplete], measurements, metadata)
+  end
+
+  defp send_reply(state, bin, metadata) do
+    Connection.reply(state, bin)
+
+    measurements = %{bytes: byte_size(bin)}
+    execute_connection_event(state, [:reply, :sent], measurements, metadata)
+  end
+
+  defp execute_connection_event(state, parts, measurements, metadata) do
+    event_metadata = Map.merge(connection_metadata(state), metadata)
+    Telemetry.execute([:connection | parts], measurements, event_metadata)
+  end
+
+  defp connection_metadata(state) do
+    peer_name = Macrina.conn_name(state.ip, state.port)
+
+    %{ip: state.ip, peer: peer_name, port: state.port}
   end
 
   defp fetch_opt(args, key) do
