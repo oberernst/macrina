@@ -1,4 +1,26 @@
 defmodule Macrina.Request do
+  @moduledoc """
+  High-level CoAP request struct.
+
+  Wraps the raw `Macrina.Message` wire format with typed fields for method,
+  path, query, host, port, and scheme. Provides constructors from keyword
+  options, URI strings, and decoded messages, plus typed accessors for
+  common CoAP options (Accept, Content-Format, Observe, Block1, Block2).
+
+  ## Building requests
+
+      Macrina.Request.new(:get, path: ["sensors", "temp"], type: :con)
+
+      Macrina.Request.from_uri(:get, "coap://localhost/sensors/temp")
+
+  ## Option accessors
+
+      request = Macrina.Request.new(:get, accept: :application_json, observe: 0)
+      Macrina.Request.accept(request)   # => :application_json
+      Macrina.Request.observe(request)  # => 0
+
+  """
+
   alias Macrina.{ContentFormat, Message, Message.Opts.Block}
 
   @path_option "Uri-Path"
@@ -41,6 +63,12 @@ defmodule Macrina.Request do
   @type uri_error :: {:invalid_uri, :fragment_not_allowed} | {:unsupported_scheme, String.t()}
   @type message_error :: {:invalid_request, term()}
 
+  @doc """
+  Builds a request from a method atom and keyword options.
+
+  Accepts typed options `:accept`, `:content_format`, `:observe`, `:block1`,
+  and `:block2` in addition to the struct fields.
+  """
   def new(method, opts \\ []) when is_atom(method) and is_list(opts) do
     request = %__MODULE__{
       method: method,
@@ -64,6 +92,12 @@ defmodule Macrina.Request do
     |> maybe_put_block2(Keyword.fetch(opts, :block2))
   end
 
+  @doc """
+  Builds a request from a method, a CoAP URI string, and optional keyword overrides.
+
+  Parses `:coap` and `:coaps` schemes. Returns `{:error, reason}` for
+  unsupported schemes or URIs containing fragments.
+  """
   def from_uri(method, uri, opts \\ [])
       when is_atom(method) and is_binary(uri) and is_list(opts) do
     parsed = URI.parse(uri)
@@ -77,6 +111,7 @@ defmodule Macrina.Request do
     end
   end
 
+  @doc "Like `from_uri/3` but raises on failure."
   def from_uri!(method, uri, opts \\ [])
       when is_atom(method) and is_binary(uri) and is_list(opts) do
     case from_uri(method, uri, opts) do
@@ -85,6 +120,7 @@ defmodule Macrina.Request do
     end
   end
 
+  @doc "Converts a decoded `Macrina.Message` into a `Request`."
   def from_message(%Message{} = message) do
     {host, port, path, query, options} = split_options(message.options)
 
@@ -105,6 +141,7 @@ defmodule Macrina.Request do
     {:ok, request}
   end
 
+  @doc "Converts this request into a low-level `Macrina.Message` for encoding."
   def to_message(%__MODULE__{} = request) do
     options = to_options(request)
 

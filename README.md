@@ -1,170 +1,84 @@
 # Macrina
 
-Saint Macrina, patron of Robotics, ora pro nobis
+An Elixir CoAP client and server library.
+
+Macrina implements the [Constrained Application Protocol](https://datatracker.ietf.org/doc/html/rfc7252) (CoAP, RFC 7252) for machine-to-machine communication over UDP, with support for:
+
+- Confirmable and non-confirmable messages with automatic retransmission
+- Block1 (upload) and Block2 (download) transfers ([RFC 7959](https://datatracker.ietf.org/doc/html/rfc7959))
+- Observe subscriptions and server-push notifications ([RFC 7641](https://datatracker.ietf.org/doc/html/rfc7641))
+- CoRE Link Format discovery via `/.well-known/core` ([RFC 6690](https://datatracker.ietf.org/doc/html/rfc6690))
+- Per-resource content negotiation and path-parameter routing
+- `:telemetry` instrumentation across the full request lifecycle
+
 ---
-Planning for the next major rewrite lives in [docs/1.0-release-plan.md](docs/1.0-release-plan.md).
 
-UNDER CONSTRUCTION! It's still a rough draft that I'm ripping to shreds constantly. LMK if you'd like this to change
-* CoAP binary request encoding and decoding (RFC 7253.3)
-* CoAP Block Transfers (RFC 7959)
-* Endpoint 
-  * can receive and decode messages
-  * started with arbitrary `handler` function for processing messages
+## Installation
 
-## Overview
-
-## Public API
-
-### Request and Response helpers
-
-The public request and response structs now expose typed helpers for common CoAP
-options instead of forcing raw option numbers into application code.
+Add `macrina` to your dependencies in `mix.exs`:
 
 ```elixir
-request =
-  Macrina.Request.new(:get,
-    accept: :application_json,
-    observe: 0,
-    block2: %Macrina.Message.Opts.Block{number: 0, more: false, size: 64}
-  )
-
-Macrina.Request.accept(request)
-# => :application_json
-
-response =
-  Macrina.Response.new(:content,
-    content_format: :application_json,
-    max_age: 60,
-    location_path: ["devices", "alpha"],
-    location_query: ["expand=true"]
-  )
-
-Macrina.Response.location_path(response)
-# => ["devices", "alpha"]
+defp deps do
+  [
+    {:macrina, "~> 0.1.4"}
+  ]
+end
 ```
 
-`Macrina.ContentFormat` provides the current content-format mapping used by
-those helpers. Unknown integer content-format values are preserved so the public
-API can stay forward-compatible with newer registry entries.
+## Quick Start
 
-`Macrina.Client.request/2` now follows implicit `Block2` responses until the
-full payload is reassembled. If application code sets `Block2` explicitly on
-the request, the client preserves that lower-level intent and returns just the
-requested chunk.
+### Server
 
-Observe flows now have a public API as well. `Macrina.Client.observe/3`
-registers the relationship and returns both the initial response and a
-`Macrina.Observe.Subscription` handle. Servers can fan out notifications with
-`Macrina.Server.notify/3`, and clients can cancel with
-`Macrina.Client.cancel_observe/1`.
+```elixir
+defmodule MyApp.Handler do
+  def call(_connection, message) do
+    Macrina.Message.response!(message, code: :content, payload: "hello", type: :ack)
+  end
+end
+
+{:ok, _server} = Macrina.Server.start_link(handler: MyApp.Handler, port: 5683)
+```
+
+### Client
 
 ```elixir
 {:ok, client} = Macrina.Client.connect(ip: {127, 0, 0, 1}, port: 5683)
 
-request = Macrina.Request.from_uri!(:get, "/temperature")
-
-{:ok, subscription, response} =
-  Macrina.Client.observe(client, request, notify_to: self())
-
+{:ok, response} = Macrina.Client.get(client, "/hello")
 response.payload
-# => "22.3 C"
-
-receive do
-  {:macrina_observe, ^subscription, notification} ->
-    notification.payload
-end
-
-:ok = Macrina.Client.cancel_observe(subscription)
+# => "hello"
 ```
 
-The public server and endpoint entrypoints now accept a typed `Block1` upload
-policy and forward it into each per-peer connection:
+## Routing
+
+For applications with multiple resources, implement the `Macrina.Router` behaviour:
 
 ```elixir
-block1 =
-  Macrina.Block1.new!(
-    max_body_size: 64 * 1024,
-    mode: :streaming,
-    preferred_block_size: 512
-  )
-
-{:ok, _server} =
-  Macrina.Server.start_link(
-    handler: Demo.Handler,
-    port: 5683,
-    block1: block1
-  )
-```
-
-That policy controls when oversized uploads are rejected, what block size is
-acknowledged back to the client during `Block1` negotiation, and whether
-handlers receive uploads atomically or chunk-by-chunk.
-
-In `:streaming` mode, raw handler modules receive `%Macrina.Block1.Chunk{}`
-values as blocks arrive. Router modules can opt into the same upload flow by
-implementing `block1/2`.
-
-```elixir
-defmodule Demo.Router do
+defmodule MyApp.Router do
   @behaviour Macrina.Router
 
   @impl true
   def call(request, _context) do
-    Macrina.Response.new(:changed, payload: request.payload)
-  end
+    case {request.method, request.path} do
+      {:get, ["temperature"]} ->
+        Macrina.Response.new(:content, payload: "22.3 C", content_format: :text_plain)
 
-  @impl true
-  def block1(chunk, _context) do
-    if chunk.complete do
-      Macrina.Response.new(:changed)
+      _ ->
+        Macrina.Response.new(:not_found)
     end
   end
 end
 
-block1 = Macrina.Block1.new!(mode: :streaming, preferred_block_size: 512)
-
-{:ok, _server} = Macrina.Server.start_link(router: Demo.Router, port: 5683, block1: block1)
+{:ok, _server} = Macrina.Server.start_link(router: MyApp.Router, port: 5683)
 ```
 
-Routers can also expose CoRE Link Format discovery data for `/.well-known/core`
-by implementing `discover/2` and returning `Macrina.Discovery.Resource`
-entries. The server path answers those requests with
-`application/link-format` and returns `4.06 Not Acceptable` when the request's
-`Accept` option asks for another content format.
+### Data-Driven Routing
+
+For richer dispatch with path parameters, content negotiation, and automatic
+discovery, define `Macrina.Resource` entries:
 
 ```elixir
-defmodule Demo.Router do
-  @behaviour Macrina.Router
-
-  @impl true
-  def call(%Macrina.Request{method: :get, path: ["temperature"]}, _context) do
-    Macrina.Response.new(:content,
-      payload: "22.3 C",
-      content_format: :text_plain
-    )
-  end
-
-  def call(_request, _context) do
-    Macrina.Response.new(:not_found)
-  end
-
-  @impl true
-  def discover(_request, _context) do
-    [
-      Macrina.Discovery.Resource.new!("/temperature", rt: "temperature-c", ct: [0])
-    ]
-  end
-end
-```
-
-For routers that want one source of truth for both path dispatch and discovery,
-`Macrina.Resource` and `Macrina.Router.dispatch/3` provide a data-driven path.
-The same resource list can drive request handling, `Accept`-based content
-negotiation, `path_params` extraction in the router context, and
-`/.well-known/core` discovery.
-
-```elixir
-defmodule Demo.Router do
+defmodule MyApp.Router do
   @behaviour Macrina.Router
 
   alias Macrina.{Request, Resource, Response, Router}
@@ -176,7 +90,7 @@ defmodule Demo.Router do
         get: [
           text_plain: Response.new(:content, payload: "22.3 C"),
           application_json: fn _request, _context ->
-            Response.new(:content, payload: "{\"value\":\"22.3 C\"}")
+            Response.new(:content, payload: ~s({"value":"22.3 C"}))
           end
         ]
       ),
@@ -184,18 +98,8 @@ defmodule Demo.Router do
         discovery_path: "/devices",
         attributes: [rt: "device-id", ct: [0]],
         get: fn _request, context ->
-          Macrina.Response.new(:content,
+          Response.new(:content,
             payload: Map.fetch!(context.path_params, :device_id),
-            content_format: :text_plain
-          )
-        end
-      ),
-      Resource.new!("/files/*path",
-        discovery_path: "/files",
-        attributes: [rt: "file-collection", ct: [0]],
-        get: fn _request, context ->
-          Macrina.Response.new(:content,
-            payload: Enum.join(Map.fetch!(context.path_params, :path), "/"),
             content_format: :text_plain
           )
         end
@@ -215,24 +119,138 @@ defmodule Demo.Router do
 end
 ```
 
-Route params use `:name` segments and subtree captures use terminal `*name`
-segments. Dynamic resources must either provide a concrete `discovery_path` or
-set `discoverable: false` so the library does not publish placeholder paths in
-`/.well-known/core`.
+## Observe
 
-### `Macrina.Endpoint`
-A thin `GenServer` wrapper around `:gen_udp`. Given an IP and port, any incoming UDP packets at that port will be sent to the `Endpoint`. This is done via `GenServer`'s built-in `handle_info` functionality.
+Servers can push notifications to clients observing a resource:
 
-### `Macrina.Connection.Server`
-A `GenServer` that represents a connection from the local `Endpoint` that started it to some other `Endpoint`. Given an IP, port, and `Handler` module, this process serves two important functions: 
-* general message handling
-  * receiving `{:coap, binary()}` messages
-  * decoding those messages
-  * using the given `Handler` module to process the message and generate any CoAP responses
-  * sending those responses via `:gen_udp`
-* client message handling
-  * the included `Macrina.Client` uses this process to send requests
-  * clients use a `GenServer.call` to do this, which returns the response from the requested endpoint or times out
+```elixir
+# Client side
+{:ok, client} = Macrina.Client.connect(ip: {127, 0, 0, 1}, port: 5683)
+request = Macrina.Request.from_uri!(:get, "/temperature")
 
-### `Macrina.Message`
-Used for encoding and decoding `CoAP` messages, defining a `struct` for in memory representation
+{:ok, subscription, initial} =
+  Macrina.Client.observe(client, request, notify_to: self())
+
+receive do
+  {:macrina_observe, ^subscription, notification} ->
+    notification.payload
+end
+
+:ok = Macrina.Client.cancel_observe(subscription)
+```
+
+```elixir
+# Server side
+{:ok, count} = Macrina.Server.notify(server, "/temperature",
+  Macrina.Response.new(:content, payload: "23.1 C")
+)
+```
+
+## Block Transfers
+
+### Block2 (Download)
+
+The client automatically reassembles block2 responses. No special configuration
+is needed.
+
+### Block1 (Upload)
+
+Configure upload policy when starting the server:
+
+```elixir
+block1 = Macrina.Block1.new!(
+  max_body_size: 64 * 1024,
+  mode: :streaming,
+  preferred_block_size: 512
+)
+
+{:ok, _server} = Macrina.Server.start_link(
+  router: MyApp.Router,
+  port: 5683,
+  block1: block1
+)
+```
+
+In `:atomic` mode (the default), handlers receive the fully reassembled payload.
+In `:streaming` mode, handlers receive `Macrina.Block1.Chunk` values as blocks
+arrive, and routers can implement `block1/2` to process them incrementally.
+
+## Discovery
+
+Routers that implement `discover/2` automatically serve `/.well-known/core`
+with `application/link-format` responses:
+
+```elixir
+@impl true
+def discover(_request, _context) do
+  [
+    Macrina.Discovery.Resource.new!("/temperature", rt: "temperature-c", ct: [0])
+  ]
+end
+```
+
+## Request & Response Helpers
+
+Both `Macrina.Request` and `Macrina.Response` provide typed accessors for
+common CoAP options:
+
+```elixir
+request = Macrina.Request.new(:get, accept: :application_json, observe: 0)
+Macrina.Request.accept(request)   # => :application_json
+
+response = Macrina.Response.new(:content,
+  content_format: :text_plain,
+  max_age: 60,
+  location_path: ["devices", "alpha"]
+)
+Macrina.Response.content_format(response)  # => :text_plain
+Macrina.Response.location_path(response)   # => ["devices", "alpha"]
+```
+
+## Architecture
+
+```
+Macrina.Server / Macrina.Client
+      │
+Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
+      │
+Macrina.Connection.Server ← per-peer GenServer (CON/NON/ACK/RST)
+      │
+Macrina.Handler           ← dispatches to raw modules or Routers
+```
+
+Each incoming UDP peer spawns a `Macrina.Connection.Server` under a
+`DynamicSupervisor`. Pure protocol state (tokens, message IDs, block transfers,
+retransmission tracking) lives in `Macrina.Exchange`. Connections idle-timeout
+after five minutes of inactivity.
+
+Key internal modules:
+
+| Module | Role |
+|---|---|
+| `Macrina.Message` | Binary CoAP codec (encode/decode) |
+| `Macrina.Exchange` | Pure exchange state machine |
+| `Macrina.Connection` | Per-peer state struct |
+| `Macrina.Blockwise` | Block transfer assembly |
+| `Macrina.Observe` | Server-side observe registry |
+| `Macrina.Telemetry` | `:telemetry` event wrapper |
+
+## Telemetry
+
+All events are prefixed with `[:macrina]`. Key events:
+
+| Event | Measurements | Description |
+|---|---|---|
+| `[:macrina, :connection, :start]` | `system_time` | Peer connection opened |
+| `[:macrina, :connection, :stop]` | `system_time` | Peer connection closed |
+| `[:macrina, :connection, :reply, :sent]` | `bytes` | Reply sent to peer |
+| `[:macrina, :client, :request]` | span | Client request round-trip |
+| `[:macrina, :exchange, :retransmit]` | `attempt`, `bytes` | CON retransmission |
+| `[:macrina, :exchange, :timeout]` | `retransmissions` | Request timed out |
+| `[:macrina, :observe, :register]` | `count` | Observe subscription created |
+| `[:macrina, :observe, :notify]` | `bytes`, `count` | Notification pushed |
+| `[:macrina, :observe, :cancel]` | `count` | Observe subscription cancelled |
+
+## License
+
+MIT

@@ -1,4 +1,13 @@
 defmodule Macrina.Discovery do
+  @moduledoc """
+  CoRE Link Format discovery (RFC 6690).
+
+  Encodes `Macrina.Discovery.Resource` entries into the
+  `application/link-format` representation served at `/.well-known/core`.
+  Also provides helpers for detecting discovery requests and building
+  complete discovery responses.
+  """
+
   alias Macrina.{Request, Response}
   alias Macrina.Discovery.Resource
 

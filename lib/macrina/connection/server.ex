@@ -1,4 +1,21 @@
 defmodule Macrina.Connection.Server do
+  @moduledoc """
+  Per-peer connection GenServer.
+
+  Manages the full lifecycle of a single CoAP peer exchange over UDP:
+  sending and receiving messages, retransmission with exponential back-off,
+  Block1/Block2 transfer assembly, duplicate detection with cached replies,
+  and Observe subscription state for both client and server roles.
+
+  One `Connection.Server` is spawned per unique remote `{ip, port}` pair
+  by `Macrina.Endpoint`. The process idles with a five-minute timeout and
+  exits `:normal` when inactive, which lets the `DynamicSupervisor` clean
+  it up.
+
+  Pure protocol state lives in `Macrina.Exchange`; this module handles
+  I/O, timers, and GenServer orchestration.
+  """
+
   use GenServer, restart: :transient
 
   alias Macrina.{
@@ -256,27 +273,25 @@ defmodule Macrina.Connection.Server do
     |> reply_to_client(message)
   end
 
+  defp completed_block_state(state, message, nil) do
+    emit_incomplete_transfer(state, message)
+    reply_incomplete_transfer(state, message)
+  end
+
   defp completed_block_state(state, message, payload) do
-    cond do
-      is_nil(payload) ->
-        emit_incomplete_transfer(state, message)
-        reply_incomplete_transfer(state, message)
+    full_message = %Message{message | payload: payload}
 
-      true ->
-        full_message = %Message{message | payload: payload}
+    execute_connection_event(
+      state,
+      [:block, :completed],
+      %{bytes: byte_size(payload), count: 1},
+      %{code: full_message.code, type: full_message.type}
+    )
 
-        execute_connection_event(
-          state,
-          [:block, :completed],
-          %{bytes: byte_size(payload), count: 1},
-          %{code: full_message.code, type: full_message.type}
-        )
-
-        state
-        |> handle(full_message)
-        |> reset_blocks(message)
-        |> reply_to_client(full_message)
-    end
+    state
+    |> handle(full_message)
+    |> reset_blocks(message)
+    |> reply_to_client(full_message)
   end
 
   defp reply_incomplete_transfer(state, message) do
@@ -920,7 +935,8 @@ defmodule Macrina.Connection.Server do
       subscription.request
       |> clear_request_option("Observe")
       |> Request.put_block2(next_block)
-      |> then(fn next_request -> %Request{next_request | id: nil, token: subscription.token} end)
+
+    request = %Request{request | id: nil, token: subscription.token}
 
     with {:ok, next_message} <- Request.to_message(request),
          {:ok, packet} <- Message.encode(next_message) do
@@ -946,35 +962,31 @@ defmodule Macrina.Connection.Server do
       response
       |> normalize_notification_type()
       |> Response.put_observe(notification.observe)
-      |> then(fn next_response ->
-        %Response{next_response | id: nil, token: notification.token}
-      end)
 
-    case Response.to_message(notification_response, nil) do
-      {:ok, message} ->
-        case Message.encode(message) do
-          {:ok, packet} ->
-            send_reply(state, packet, %{
-              code: message.code,
-              observe: notification.observe,
-              path: notification.path,
-              stage: :observe,
-              type: message.type
-            })
+    notification_response = %Response{
+      notification_response
+      | id: nil,
+        token: notification.token
+    }
 
-            Telemetry.execute(
-              [:observe, :notify],
-              %{bytes: byte_size(packet), count: 1},
-              %{path: notification.path, token: notification.token, observe: notification.observe}
-            )
+    with {:ok, message} <- Response.to_message(notification_response, nil),
+         {:ok, packet} <- Message.encode(message) do
+      send_reply(state, packet, %{
+        code: message.code,
+        observe: notification.observe,
+        path: notification.path,
+        stage: :observe,
+        type: message.type
+      })
 
-            state
+      Telemetry.execute(
+        [:observe, :notify],
+        %{bytes: byte_size(packet), count: 1},
+        %{path: notification.path, token: notification.token, observe: notification.observe}
+      )
 
-          {:error, reason} ->
-            emit_reply_error(state, :encode, :observe, reason)
-            state
-        end
-
+      state
+    else
       {:error, reason} ->
         execute_connection_event(state, [:reply, :build, :error], %{count: 1}, %{
           error: reason,

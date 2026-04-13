@@ -1,4 +1,47 @@
 defmodule Macrina.Client do
+  @moduledoc """
+  CoAP client.
+
+  Provides a connection-oriented client API for sending CoAP requests and
+  managing Observe subscriptions. Each client struct wraps a
+  `Macrina.Connection.Server` process that handles retransmission, block
+  transfers, and observe notifications for a single remote peer.
+
+  ## Connecting
+
+      {:ok, client} = Macrina.Client.connect(ip: {127, 0, 0, 1}, port: 5683)
+
+  ## Requests
+
+      {:ok, response} = Macrina.Client.get(client, "/temperature")
+      {:ok, response} = Macrina.Client.post(client, "/config", "new-value")
+
+  Or with a `Macrina.Request` struct for full control:
+
+      request = Macrina.Request.from_uri!(:get, "/sensors/temp",
+        accept: :application_json
+      )
+      {:ok, response} = Macrina.Client.request(client, request)
+
+  Block2 (download) responses are reassembled automatically unless the
+  request explicitly sets a `Block2` option.
+
+  ## Observe
+
+      {:ok, subscription, initial} =
+        Macrina.Client.observe(client, request, notify_to: self())
+
+      receive do
+        {:macrina_observe, ^subscription, notification} ->
+          notification.payload
+      end
+
+      :ok = Macrina.Client.cancel_observe(subscription)
+
+  Notifications arrive as `{:macrina_observe, subscription, response}`
+  messages to the process specified by `:notify_to` (defaults to `self()`).
+  """
+
   alias Macrina.{
     Blockwise,
     Connection.Server,
@@ -13,10 +56,17 @@ defmodule Macrina.Client do
 
   defstruct [:conn, :ip, :port]
 
+  @doc """
+  Connects to a remote CoAP peer.
+
+  Accepts `:ip`, `:port`, and an optional `:endpoint` (defaults to
+  `Macrina.Endpoint`). Returns `{:ok, client}` or `{:error, reason}`.
+  """
   def connect(opts) when is_list(opts) do
     new(opts)
   end
 
+  @doc "Like `connect/1` but raises on failure."
   def connect!(opts) when is_list(opts) do
     case connect(opts) do
       {:ok, client} -> client
@@ -24,6 +74,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc false
   def new(opts) when is_list(opts) do
     with {:ok, ip} <- fetch_opt(opts, :ip),
          {:ok, port} <- fetch_opt(opts, :port) do
@@ -32,6 +83,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc false
   def new!(opts) when is_list(opts) do
     case new(opts) do
       {:ok, client} -> client
@@ -39,6 +91,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc false
   def build(ip, port, endpoint \\ Endpoint) do
     with {:ok, socket} <- Endpoint.socket(endpoint),
          {:ok, handler} <- Endpoint.handler(endpoint),
@@ -48,6 +101,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc false
   def build!(ip, port, endpoint \\ Endpoint) do
     case build(ip, port, endpoint) do
       {:ok, client} -> client
@@ -55,6 +109,12 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc """
+  Sends a `Macrina.Request` and returns `{:ok, response}` or `{:error, reason}`.
+
+  Block2 responses are reassembled automatically unless the request sets
+  `Block2` explicitly.
+  """
   def request(%__MODULE__{conn: pid, ip: ip, port: port}, %Request{} = request) do
     metadata = %{method: request.method, path: request.path, peer: %{ip: ip, port: port}}
 
@@ -66,6 +126,7 @@ defmodule Macrina.Client do
     end)
   end
 
+  @doc "Like `request/2` but raises on failure."
   def request!(%__MODULE__{} = client, %Request{} = request) do
     case request(client, request) do
       {:ok, response} -> response
@@ -73,6 +134,15 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc """
+  Registers an observe relationship for the given request.
+
+  Returns `{:ok, subscription, initial_response}` on success. Subsequent
+  server notifications arrive as `{:macrina_observe, subscription, response}`
+  messages to the `:notify_to` process (defaults to `self()`).
+
+  Accepts either a `Macrina.Request` struct or a URI string.
+  """
   def observe(client, request_or_uri, opts \\ [])
 
   def observe(%__MODULE__{} = client, %Request{} = request, opts) when is_list(opts) do
@@ -94,6 +164,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc "Like `observe/3` but raises on failure."
   def observe!(%__MODULE__{} = client, request_or_uri, opts \\ []) do
     case observe(client, request_or_uri, opts) do
       {:ok, subscription, response} -> {subscription, response}
@@ -101,6 +172,12 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc """
+  Cancels an active observe subscription.
+
+  Sends an observe-cancel request to the server and unregisters the
+  local subscription. Returns `{:ok, response}` or `{:error, reason}`.
+  """
   def cancel_observe(%Subscription{} = subscription) do
     cancel_request = observe_cancel_request(subscription)
 
@@ -111,6 +188,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc "Like `cancel_observe/1` but raises on failure."
   def cancel_observe!(%Subscription{} = subscription) do
     case cancel_observe(subscription) do
       {:ok, response} -> response
@@ -118,6 +196,7 @@ defmodule Macrina.Client do
     end
   end
 
+  @doc "Sends a confirmable GET request to the given URI."
   def get(%__MODULE__{} = client, uri) when is_binary(uri) do
     request_uri(client, :get, uri, type: :con)
   end
@@ -126,6 +205,7 @@ defmodule Macrina.Client do
     request!(client, Request.from_uri!(:get, uri, type: :con))
   end
 
+  @doc "Sends a confirmable POST request with optional payload."
   def post(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
     request_uri(client, :post, uri, payload: payload, type: :con)
   end
@@ -134,6 +214,7 @@ defmodule Macrina.Client do
     request!(client, Request.from_uri!(:post, uri, payload: payload, type: :con))
   end
 
+  @doc "Sends a confirmable PUT request with optional payload."
   def put(%__MODULE__{} = client, uri, payload \\ <<>>) when is_binary(uri) do
     request_uri(client, :put, uri, payload: payload, type: :con)
   end
@@ -142,6 +223,7 @@ defmodule Macrina.Client do
     request!(client, Request.from_uri!(:put, uri, payload: payload, type: :con))
   end
 
+  @doc "Sends a confirmable DELETE request to the given URI."
   def delete(%__MODULE__{} = client, uri) when is_binary(uri) do
     request_uri(client, :delete, uri, type: :con)
   end
@@ -185,14 +267,9 @@ defmodule Macrina.Client do
   end
 
   defp observe_cancel_request(%Subscription{request: request, token: token}) do
-    options =
-      request.options
-      |> Enum.reject(fn {name, _value} -> name in ["Observe", "Block2"] end)
+    options = Enum.reject(request.options, fn {name, _} -> name in ["Observe", "Block2"] end)
 
-    request
-    |> then(fn next_request ->
-      %Request{next_request | id: nil, options: options, token: token}
-    end)
+    %Request{request | id: nil, options: options, token: token}
     |> Request.put_observe(1)
   end
 
@@ -274,10 +351,8 @@ defmodule Macrina.Client do
          token: token
        }) do
     next_block = %Block{number: block.number + 1, more: false, size: block.size}
-
-    request
-    |> Request.put_block2(next_block)
-    |> then(fn next_request -> %Request{next_request | id: nil, token: token} end)
+    next_request = Request.put_block2(request, next_block)
+    %Request{next_request | id: nil, token: token}
   end
 
   defp call_server(pid, message) do

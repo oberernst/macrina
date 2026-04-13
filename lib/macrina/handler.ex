@@ -1,4 +1,21 @@
 defmodule Macrina.Handler do
+  @moduledoc """
+  Request dispatch bridge.
+
+  Dispatches decoded CoAP messages to either a raw handler module or a
+  `Macrina.Router` implementation. When the handler is a router, this module
+  also intercepts `/.well-known/core` discovery requests and delegates
+  `Block1` streaming chunks.
+
+  ## Handler types
+
+    * `module()` — any module exporting `call/2` that receives the
+      `Macrina.Connection` state and a `Macrina.Message` (or
+      `Macrina.Block1.Chunk`) and returns a reply `Message` or `nil`.
+
+    * `{:router, module(), context}` — a `Macrina.Router` implementation.
+      The context map is threaded into every router callback.
+  """
   alias Macrina.{
     Block1.Chunk,
     Connection,

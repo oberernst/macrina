@@ -1,13 +1,54 @@
 defmodule Macrina do
-  defp append_port(ip_string, port) do
+  @moduledoc """
+  Root module for the Macrina CoAP library.
+
+  Macrina is an Elixir implementation of the Constrained Application Protocol
+  (CoAP, RFC 7252) for machine-to-machine communication over UDP. It provides
+  a client, server, and codec layer with support for:
+
+    * Confirmable and non-confirmable messages with automatic retransmission
+    * Block1 (upload) and Block2 (download) transfers (RFC 7959)
+    * Observe subscriptions and server-push notifications (RFC 7641)
+    * CoRE Link Format discovery via `/.well-known/core` (RFC 6690)
+    * Per-resource content negotiation and path-parameter routing
+    * `:telemetry` instrumentation across the full request lifecycle
+
+  ## Architecture
+
+  ```
+  Macrina.Server / Macrina.Client
+        │
+  Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
+        │
+  Macrina.Connection.Server ← per-peer GenServer (CON/NON/ACK/RST)
+        │
+  Macrina.Handler           ← dispatches to raw modules or Routers
+  ```
+
+  Each incoming UDP peer spawns a `Connection.Server` under a
+  `DynamicSupervisor`. Pure protocol state (tokens, message IDs, block
+  transfers, retransmission tracking) lives in `Macrina.Exchange`.
+  """
+
+  @doc """
+  Returns a human-readable name for a peer address.
+
+  ## Examples
+
+      iex> Macrina.conn_name({127, 0, 0, 1}, 5683)
+      "127.0.0.1/5683"
+
+      iex> Macrina.conn_name({0, 0, 0, 0, 0, 0, 0, 1}, 5683)
+      "0:0:0:0:0:0:0:1/5683"
+
+  """
+  def conn_name({_, _, _, _} = ip, port) do
+    ip_string = ip |> Tuple.to_list() |> Enum.join(".")
     "#{ip_string}/#{port}"
   end
 
-  def conn_name({_, _, _, _} = ip, port) do
-    ip |> Tuple.to_list() |> Enum.join(".") |> append_port(port)
-  end
-
   def conn_name({_, _, _, _, _, _, _, _} = ip, port) do
-    ip |> Tuple.to_list() |> Enum.join(":") |> append_port(port)
+    ip_string = ip |> Tuple.to_list() |> Enum.join(":")
+    "#{ip_string}/#{port}"
   end
 end

@@ -1,4 +1,24 @@
 defmodule Macrina.Resource do
+  @moduledoc """
+  Routable CoAP resource with pattern-matched paths and content negotiation.
+
+  Resources define a path pattern, optional method handlers (as static
+  responses or builder functions), and optional discovery attributes. Used
+  with `Macrina.Router.dispatch/3` for data-driven request routing.
+
+  ## Path patterns
+
+    * `"/temperature"` — literal path segments
+    * `"/devices/:device_id"` — named parameter capture
+    * `"/files/*path"` — terminal glob capture (matches all remaining segments)
+
+  ## Content negotiation
+
+  Method handlers can be a single action or a keyword list of
+  content-format-keyed representations. When multiple representations
+  exist, the resource negotiates using the request's `Accept` option.
+  """
+
   alias Macrina.{ContentFormat, Request, Response}
   alias Macrina.Discovery.Resource, as: DiscoveryResource
 

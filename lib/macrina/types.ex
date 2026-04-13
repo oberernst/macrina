@@ -1,4 +1,10 @@
 defmodule Macrina.Types do
+  @moduledoc """
+  Bidirectional codec for CoAP message types.
+
+  Maps between atoms (`:con`, `:non`, `:ack`, `:rst`) and their integer
+  wire values (0–3) as defined in RFC 7252, Section 3.
+  """
   @types_by_number %{0 => :con, 1 => :non, 2 => :ack, 3 => :rst}
   @numbers_by_type %{con: 0, non: 1, ack: 2, rst: 3, res: 3}
 

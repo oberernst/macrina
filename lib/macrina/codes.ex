@@ -1,4 +1,10 @@
 defmodule Macrina.Codes do
+  @moduledoc """
+  Bidirectional codec for CoAP method and response codes.
+
+  Maps between atoms (`:get`, `:content`, `:not_found`, etc.) and their
+  binary `{class, detail}` tuples as defined in RFC 7252, Section 12.1.
+  """
   @method_codes ~w(empty get post put delete)a
   @response_codes ~w(request_entity_incomplete created deleted valid continue changed content bad_request unauthorized bad_option forbidden not_found method_not_allowed not_acceptable precondition_failed request_entity_too_large unsupported_content_format internal_server_error not_implemented bad_gateway service_unavailable gateway_timeout  proxying_not_supported)a
   @codes_by_number %{

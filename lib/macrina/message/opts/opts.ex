@@ -1,4 +1,10 @@
 defmodule Macrina.Message.Opts do
+  @moduledoc """
+  CoAP option number/name registry (RFC 7252, Section 5.10).
+
+  Maps between integer option numbers and their string names
+  (e.g., `11` ↔ `"Uri-Path"`).
+  """
   @opts [
     {1, "If-Match"},
     {3, "Uri-Host"},

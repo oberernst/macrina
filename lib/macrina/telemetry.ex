@@ -1,4 +1,11 @@
 defmodule Macrina.Telemetry do
+  @moduledoc """
+  Telemetry integration.
+
+  Thin wrapper around `:telemetry` that prefixes all event names with
+  `[:macrina]`. Every public timing span and counter in the library flows
+  through this module.
+  """
   @prefix [:macrina]
 
   def prefix, do: @prefix

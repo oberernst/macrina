@@ -1,4 +1,17 @@
 defmodule Macrina.Endpoint do
+  @moduledoc """
+  UDP socket manager.
+
+  A GenServer that opens a `:gen_udp` socket and spawns a
+  `Macrina.Connection.Server` for each remote peer that sends a packet.
+  Connections are started under `Macrina.ConnectionSupervisor`
+  (`DynamicSupervisor`) and are identified by the peer's `{ip, port}` pair.
+
+  In most cases you will not start an endpoint directly — use
+  `Macrina.Server.start_link/1` instead, which wraps this module with
+  higher-level option validation.
+  """
+
   use GenServer
   alias Macrina.{Block1, Connection.Server, ConnectionSupervisor, Router, Telemetry}
 

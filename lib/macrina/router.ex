@@ -1,4 +1,16 @@
 defmodule Macrina.Router do
+  @moduledoc """
+  Behaviour and utilities for CoAP request routers.
+
+  A router module implements `call/2` to handle requests, and optionally
+  `block1/2` for streaming uploads and `discover/2` for `/.well-known/core`
+  resource listing.
+
+  For data-driven routing, combine `Macrina.Resource` definitions with
+  `dispatch/3` and `discovery_resources/1` to derive both request handling
+  and discovery from a single resource list.
+  """
+
   alias Macrina.{Block1.Chunk, Request, Resource, Response}
   alias Macrina.Discovery.Resource, as: DiscoveryResource
 
@@ -8,6 +20,12 @@ defmodule Macrina.Router do
 
   @optional_callbacks block1: 2, discover: 2
 
+  @doc """
+  Dispatches a request against a list of `Macrina.Resource` definitions.
+
+  Returns the matched resource's response, or a `:not_found` response
+  (configurable via the `:not_found` option).
+  """
   def dispatch(resources, %Request{} = request, context, opts \\ [])
       when is_list(resources) and is_map(context) and is_list(opts) do
     not_found = Keyword.get(opts, :not_found, Response.new(:not_found))
@@ -18,6 +36,10 @@ defmodule Macrina.Router do
     end
   end
 
+  @doc """
+  Converts a list of `Macrina.Resource` structs into their
+  `Macrina.Discovery.Resource` equivalents for `/.well-known/core`.
+  """
   def discovery_resources(resources) when is_list(resources) do
     Enum.reduce_while(resources, {:ok, []}, fn
       %Resource{} = resource, {:ok, discovery_resources} ->
@@ -42,6 +64,7 @@ defmodule Macrina.Router do
     end
   end
 
+  @doc "Like `discovery_resources/1` but raises on failure."
   def discovery_resources!(resources) when is_list(resources) do
     case discovery_resources(resources) do
       {:ok, discovery_resources} -> discovery_resources
@@ -49,10 +72,12 @@ defmodule Macrina.Router do
     end
   end
 
+  @doc "Returns `true` if the router module exports `block1/2`."
   def supports_block1_streaming?(router) when is_atom(router) do
     function_exported?(router, :block1, 2)
   end
 
+  @doc "Returns `true` if the router module exports `discover/2`."
   def supports_discovery?(router) when is_atom(router) do
     function_exported?(router, :discover, 2)
   end

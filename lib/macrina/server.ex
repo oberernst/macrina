@@ -1,13 +1,63 @@
 defmodule Macrina.Server do
+  @moduledoc """
+  Public entry point for starting a CoAP server.
+
+  Wraps `Macrina.Endpoint` with ergonomic options for handler/router selection,
+  Block1 upload policy, and observer notifications.
+
+  ## Starting a server
+
+      {:ok, server} = Macrina.Server.start_link(
+        handler: MyApp.CoapHandler,
+        port: 5683
+      )
+
+  Or with a router and Block1 policy:
+
+      block1 = Macrina.Block1.new!(mode: :streaming, preferred_block_size: 512)
+
+      {:ok, server} = Macrina.Server.start_link(
+        router: MyApp.Router,
+        port: 5683,
+        block1: block1
+      )
+
+  ## Options
+
+    * `:handler` — a module implementing `c:Macrina.Handler.call/2`
+    * `:router` — a module implementing `Macrina.Router` (mutually exclusive with `:handler`)
+    * `:context` — an arbitrary map passed to router callbacks (default: `%{}`)
+    * `:port` — UDP port to bind (required)
+    * `:name` — registered name for the endpoint process
+    * `:block1` — a `Macrina.Block1` policy struct for upload handling
+
+  ## Pushing notifications
+
+  After starting a server, use `notify/3` to push a response to all clients
+  observing a given path:
+
+      {:ok, count} = Macrina.Server.notify(server, "/temperature",
+        Macrina.Response.new(:content, payload: "23.1 C")
+      )
+
+  Returns `{:ok, count}` where `count` is the number of observers notified.
+  """
+
   alias Macrina.{Block1, Endpoint, Observe, Response, Router}
   alias Macrina.Connection.Server, as: ConnectionServer
 
+  @doc """
+  Starts a CoAP server bound to the given UDP port.
+
+  Returns `{:ok, pid}` on success. See module documentation for options.
+  """
   def start_link(opts) when is_list(opts) do
     with {:ok, endpoint_opts} <- build_endpoint_opts(opts) do
       Endpoint.start_link(endpoint_opts)
     end
   end
 
+  @doc "Like `start_link/1` but raises on failure."
   def start_link!(opts) when is_list(opts) do
     case start_link(opts) do
       {:ok, pid} -> pid
@@ -15,6 +65,12 @@ defmodule Macrina.Server do
     end
   end
 
+  @doc """
+  Pushes a response to all clients observing `path` on `server`.
+
+  Returns `{:ok, count}` where `count` is the number of observers notified,
+  or `{:error, reason}` if the path cannot be resolved.
+  """
   def notify(server, path, %Response{} = response) do
     with {:ok, endpoint} <- resolve_endpoint(server),
          {:ok, notifications} <- Observe.notifications(endpoint, path) do
@@ -26,6 +82,7 @@ defmodule Macrina.Server do
     end
   end
 
+  @doc "Like `notify/3` but raises on failure."
   def notify!(server, path, %Response{} = response) do
     case notify(server, path, response) do
       {:ok, count} -> count

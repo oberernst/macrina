@@ -1,4 +1,28 @@
 defmodule Macrina.Response do
+  @moduledoc """
+  High-level CoAP response struct.
+
+  Mirrors `Macrina.Request` on the response side. Provides constructors,
+  message conversion, and typed accessors for common CoAP response options
+  (Content-Format, Location-Path, Location-Query, Max-Age, Observe, Block1,
+  Block2).
+
+  ## Building responses
+
+      Macrina.Response.new(:content,
+        payload: "22.3 C",
+        content_format: :text_plain,
+        max_age: 60
+      )
+
+  ## Reading options
+
+      Macrina.Response.content_format(response)  # => :text_plain
+      Macrina.Response.max_age(response)          # => 60
+      Macrina.Response.location_path(response)    # => ["devices", "alpha"]
+
+  """
+
   alias Macrina.{ContentFormat, Message, Message.Opts.Block}
 
   @location_path_option "Location-Path"
@@ -22,6 +46,12 @@ defmodule Macrina.Response do
           type: :ack | :con | :non | :rst
         }
 
+  @doc """
+  Builds a response from a code atom and keyword options.
+
+  Accepts typed options `:content_format`, `:location_path`, `:location_query`,
+  `:max_age`, `:observe`, `:block1`, and `:block2` in addition to the struct fields.
+  """
   def new(code, opts \\ []) when is_atom(code) and is_list(opts) do
     response = %__MODULE__{
       code: code,
@@ -44,6 +74,7 @@ defmodule Macrina.Response do
     |> maybe_put_block2(Keyword.fetch(opts, :block2))
   end
 
+  @doc "Converts a decoded `Macrina.Message` into a `Response`."
   def from_message(%Message{} = message) do
     %__MODULE__{
       code: message.code,
@@ -57,6 +88,13 @@ defmodule Macrina.Response do
     }
   end
 
+  @doc """
+  Converts this response into a low-level `Macrina.Message` for encoding.
+
+  When `request_message` is a `Macrina.Message`, the response inherits the
+  request's token and message ID. Pass `nil` to build a standalone message
+  (used for observe notifications).
+  """
   def to_message(%__MODULE__{} = response, %Message{} = request_message) do
     options = normalize_typed_options(response.options)
 

@@ -1,4 +1,15 @@
 defmodule Macrina.Message do
+  @moduledoc """
+  Low-level CoAP message codec.
+
+  Encodes and decodes CoAP messages to and from their binary wire format
+  (RFC 7252, Section 3). Also provides builders for constructing request and
+  response messages with automatic token generation and message-ID assignment.
+
+  Application code normally uses `Macrina.Request` and `Macrina.Response`
+  instead of this module directly.
+  """
+
   alias Macrina.{Codes, Message.Opts.Binary, Message.Opts.Block, Types}
 
   defstruct [:code, :control_block, :descriptive_block, :id, :options, :payload, :token, :type]
