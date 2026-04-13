@@ -28,6 +28,11 @@ defmodule Macrina.EndpointTest do
     end
   end
 
+  defp stop_process(pid) when is_pid(pid) do
+    Process.exit(pid, :normal)
+    :ok
+  end
+
   test "public endpoint propagates block1 policy" do
     policy = Block1.new!(preferred_block_size: 32)
 
@@ -38,10 +43,7 @@ defmodule Macrina.EndpointTest do
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
     on_exit(fn ->
-      if Process.alive?(endpoint) do
-        GenServer.stop(endpoint)
-      end
-
+      stop_process(endpoint)
       :gen_udp.close(client_socket)
     end)
 
@@ -82,10 +84,7 @@ defmodule Macrina.EndpointTest do
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
     on_exit(fn ->
-      if Process.alive?(endpoint) do
-        GenServer.stop(endpoint)
-      end
-
+      stop_process(endpoint)
       :gen_udp.close(client_socket)
     end)
 

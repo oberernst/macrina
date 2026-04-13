@@ -18,30 +18,36 @@ defmodule Macrina.Discovery do
 
   def encode(resources) when is_list(resources) do
     resources
-    |> Enum.reduce_while({:ok, []}, fn
-      %Resource{} = resource, {:ok, encoded_resources} ->
-        {:cont, {:ok, encoded_resources ++ [encode_resource(resource)]}}
+    |> Enum.reduce_while({:ok, []}, fn resource, {:ok, encoded_resources} ->
+      case encode_resource_entry(resource) do
+        {:ok, encoded_resource} ->
+          next_resources = [encoded_resource | encoded_resources]
+          {:cont, {:ok, next_resources}}
 
-      resource, _acc ->
-        {:halt, {:error, {:invalid_resource, resource}}}
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
     end)
     |> case do
-      {:ok, encoded_resources} -> {:ok, Enum.join(encoded_resources, ",")}
-      {:error, reason} -> {:error, reason}
+      {:ok, encoded_resources} ->
+        payload = encoded_resources |> Enum.reverse() |> Enum.join(",")
+        {:ok, payload}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   def response(resources, request \\ nil) when is_list(resources) do
-    if acceptable_content_format?(request) do
-      with {:ok, payload} <- encode(resources) do
-        {:ok,
-         Response.new(:content,
-           payload: payload,
-           content_format: :application_link_format
-         )}
-      end
+    with :ok <- ensure_acceptable_content_format(request),
+         {:ok, payload} <- encode(resources) do
+      {:ok,
+       Response.new(:content,
+         payload: payload,
+         content_format: :application_link_format
+       )}
     else
-      {:ok, Response.new(:not_acceptable)}
+      {:error, :not_acceptable} -> {:ok, Response.new(:not_acceptable)}
     end
   end
 
@@ -52,17 +58,25 @@ defmodule Macrina.Discovery do
     end
   end
 
-  defp acceptable_content_format?(nil) do
-    true
+  defp ensure_acceptable_content_format(nil) do
+    :ok
   end
 
-  defp acceptable_content_format?(%Request{} = request) do
+  defp ensure_acceptable_content_format(%Request{} = request) do
     case Request.accept(request) do
-      nil -> true
-      :application_link_format -> true
-      40 -> true
-      _other -> false
+      nil -> :ok
+      :application_link_format -> :ok
+      40 -> :ok
+      _other -> {:error, :not_acceptable}
     end
+  end
+
+  defp encode_resource_entry(%Resource{} = resource) do
+    {:ok, encode_resource(resource)}
+  end
+
+  defp encode_resource_entry(resource) do
+    {:error, {:invalid_resource, resource}}
   end
 
   defp encode_resource(%Resource{path: path, attributes: attributes}) do

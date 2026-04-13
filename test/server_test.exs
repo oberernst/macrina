@@ -98,6 +98,11 @@ defmodule Macrina.ServerTest do
     end
   end
 
+  defp stop_process(pid) when is_pid(pid) do
+    Process.exit(pid, :normal)
+    :ok
+  end
+
   test "public server propagates block1 preferred block size" do
     policy = Block1.new!(preferred_block_size: 32)
 
@@ -108,10 +113,7 @@ defmodule Macrina.ServerTest do
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
     on_exit(fn ->
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
-
+      stop_process(server)
       :gen_udp.close(client_socket)
     end)
 
@@ -144,10 +146,7 @@ defmodule Macrina.ServerTest do
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
     on_exit(fn ->
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
-
+      stop_process(server)
       :gen_udp.close(client_socket)
     end)
 
@@ -212,10 +211,7 @@ defmodule Macrina.ServerTest do
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
     on_exit(fn ->
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
-
+      stop_process(server)
       :gen_udp.close(client_socket)
     end)
 
@@ -274,13 +270,8 @@ defmodule Macrina.ServerTest do
              Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
-      if Process.alive?(client_endpoint) do
-        GenServer.stop(client_endpoint)
-      end
-
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
+      stop_process(client_endpoint)
+      stop_process(server)
     end)
 
     assert {:ok, client} =
@@ -332,13 +323,8 @@ defmodule Macrina.ServerTest do
              Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
-      if Process.alive?(client_endpoint) do
-        GenServer.stop(client_endpoint)
-      end
-
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
+      stop_process(client_endpoint)
+      stop_process(server)
     end)
 
     assert {:ok, client} =
@@ -362,13 +348,8 @@ defmodule Macrina.ServerTest do
              Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
-      if Process.alive?(client_endpoint) do
-        GenServer.stop(client_endpoint)
-      end
-
-      if Process.alive?(server) do
-        GenServer.stop(server)
-      end
+      stop_process(client_endpoint)
+      stop_process(server)
     end)
 
     assert {:ok, client} =

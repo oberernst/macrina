@@ -29,6 +29,10 @@ defmodule Macrina.DiscoveryTest do
     assert Response.content_format(response) == nil
   end
 
+  test "encode rejects invalid discovery resource entries" do
+    assert {:error, {:invalid_resource, :bad_resource}} = Discovery.encode([:bad_resource])
+  end
+
   test "resource validation rejects unsupported attribute values" do
     assert {:error, {:invalid_attribute_value, %{bad: true}}} =
              Resource.new("/status", rt: %{bad: true})

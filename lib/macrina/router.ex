@@ -26,7 +26,7 @@ defmodule Macrina.Router do
             {:cont, {:ok, discovery_resources}}
 
           {:ok, %DiscoveryResource{} = discovery_resource} ->
-            next_resources = discovery_resources ++ [discovery_resource]
+            next_resources = [discovery_resource | discovery_resources]
             {:cont, {:ok, next_resources}}
 
           {:error, reason} ->
@@ -36,6 +36,10 @@ defmodule Macrina.Router do
       resource, _acc ->
         {:halt, {:error, {:invalid_resource, resource}}}
     end)
+    |> case do
+      {:ok, discovery_resources} -> {:ok, Enum.reverse(discovery_resources)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   def discovery_resources!(resources) when is_list(resources) do

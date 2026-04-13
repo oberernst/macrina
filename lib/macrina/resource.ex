@@ -5,12 +5,16 @@ defmodule Macrina.Resource do
   @method_keys [:get, :post, :put, :delete]
 
   @type path_segment :: String.t() | {:param, atom()} | {:glob, atom()}
-  @type response_builder :: Response.t() | (Request.t(), map() -> Response.t() | nil)
   @type representation_key :: :default | atom() | non_neg_integer()
+  @type path_param_value :: String.t() | [String.t()]
+  @type path_params :: %{optional(atom()) => path_param_value()}
+  @type response_builder :: (Request.t(), map() -> Response.t() | nil)
+  @type action :: {:response, Response.t()} | {:builder, response_builder()}
+  @type representations :: {:representations, [{representation_key(), action()}]}
   @type t :: %__MODULE__{
           path: [path_segment()],
           discovery_path: nil | [String.t()],
-          handlers: %{atom() => term()},
+          handlers: %{atom() => action() | representations()},
           attributes: [{String.t(), term()}]
         }
 
@@ -38,19 +42,9 @@ defmodule Macrina.Resource do
     end
   end
 
-  def match?(%__MODULE__{path: path, handlers: handlers}, %Request{method: method, path: path}) do
-    Map.has_key?(handlers, method)
-  end
-
-  def match?(%__MODULE__{path: path, handlers: handlers}, %Request{
-        method: method,
-        path: request_path
-      }) do
-    Map.has_key?(handlers, method) and match_path(path, request_path) != :error
-  end
-
-  def match?(%__MODULE__{}, %Request{}) do
-    false
+  def match?(%__MODULE__{} = resource, %Request{} = request) do
+    not is_nil(action_for_method(resource, request.method)) and
+      params(resource, request) != :error
   end
 
   def match?(_resource, _request) do
@@ -61,8 +55,8 @@ defmodule Macrina.Resource do
       when is_map(context) do
     with {:ok, action} <- Map.fetch(handlers, request.method),
          {:ok, path_params} <- params(resource, request) do
-      action
-      |> execute_action(request, put_path_params(context, path_params))
+      route_context = put_path_params(context, path_params)
+      execute_action(action, request, route_context)
     else
       :error -> Response.new(:not_found)
     end
@@ -100,25 +94,18 @@ defmodule Macrina.Resource do
   end
 
   defp normalize_discovery_path(path, opts) do
-    case Keyword.fetch(opts, :discoverable) do
-      {:ok, false} ->
+    cond do
+      Keyword.get(opts, :discoverable) == false ->
         {:ok, nil}
 
-      _other ->
-        case Keyword.fetch(opts, :discovery_path) do
-          {:ok, discovery_path} ->
-            case DiscoveryResource.new(discovery_path, []) do
-              {:ok, %DiscoveryResource{path: normalized_path}} -> {:ok, normalized_path}
-              {:error, reason} -> {:error, reason}
-            end
+      Keyword.has_key?(opts, :discovery_path) ->
+        normalize_concrete_path(Keyword.fetch!(opts, :discovery_path))
 
-          :error ->
-            if concrete_path?(path) do
-              {:ok, path}
-            else
-              {:error, :dynamic_resource_requires_discovery_path}
-            end
-        end
+      concrete_path?(path) ->
+        {:ok, path}
+
+      true ->
+        {:error, :dynamic_resource_requires_discovery_path}
     end
   end
 
@@ -134,20 +121,21 @@ defmodule Macrina.Resource do
   end
 
   defp normalize_handlers(opts) do
-    method_opts = Keyword.take(opts, @method_keys)
+    case Keyword.take(opts, @method_keys) do
+      [] ->
+        {:error, :missing_handler}
 
-    if method_opts == [] do
-      {:error, :missing_handler}
-    else
-      Enum.reduce_while(method_opts, {:ok, %{}}, fn {method, action}, {:ok, handlers} ->
-        case normalize_method_action(action) do
-          {:ok, normalized_action} ->
-            {:cont, {:ok, Map.put(handlers, method, normalized_action)}}
+      method_opts ->
+        Enum.reduce_while(method_opts, {:ok, %{}}, fn {method, action}, {:ok, handlers} ->
+          case normalize_method_action(action) do
+            {:ok, normalized_action} ->
+              next_handlers = Map.put(handlers, method, normalized_action)
+              {:cont, {:ok, next_handlers}}
 
-          {:error, reason} ->
-            {:halt, {:error, {method, reason}}}
-        end
-      end)
+            {:error, reason} ->
+              {:halt, {:error, {method, reason}}}
+          end
+        end)
     end
   end
 
@@ -176,7 +164,11 @@ defmodule Macrina.Resource do
       {format, action}, {:ok, normalized_representations} ->
         with {:ok, normalized_format} <- normalize_representation_format(format),
              {:ok, normalized_action} <- normalize_representation_action(action) do
-          {:cont, {:ok, normalized_representations ++ [{normalized_format, normalized_action}]}}
+          next_representations = [
+            {normalized_format, normalized_action} | normalized_representations
+          ]
+
+          {:cont, {:ok, next_representations}}
         else
           {:error, reason} -> {:halt, {:error, reason}}
         end
@@ -185,8 +177,12 @@ defmodule Macrina.Resource do
         {:halt, {:error, {:invalid_representation, representation}}}
     end)
     |> case do
-      {:ok, normalized_representations} -> {:ok, {:representations, normalized_representations}}
-      {:error, reason} -> {:error, reason}
+      {:ok, normalized_representations} ->
+        ordered_representations = Enum.reverse(normalized_representations)
+        {:ok, {:representations, ordered_representations}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -264,6 +260,10 @@ defmodule Macrina.Resource do
     end
   end
 
+  defp action_for_method(%__MODULE__{handlers: handlers}, method) do
+    Map.get(handlers, method)
+  end
+
   defp maybe_put_content_format(nil, _format) do
     nil
   end
@@ -274,6 +274,13 @@ defmodule Macrina.Resource do
 
   defp maybe_put_content_format(%Response{} = response, format) do
     Response.put_content_format(response, format)
+  end
+
+  defp normalize_concrete_path(path) do
+    case DiscoveryResource.new(path, []) do
+      {:ok, %DiscoveryResource{path: normalized_path}} -> {:ok, normalized_path}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp path_segments(path) when is_binary(path) do
@@ -287,26 +294,35 @@ defmodule Macrina.Resource do
       |> Enum.reduce_while({:ok, []}, fn segment, {:ok, segments} ->
         case normalize_segment(segment) do
           {:ok, normalized_segment} ->
-            {:cont, {:ok, segments ++ [normalized_segment]}}
+            next_segments = [normalized_segment | segments]
+            {:cont, {:ok, next_segments}}
 
           {:error, reason} ->
             {:halt, {:error, reason}}
         end
       end)
 
-    normalized_path
+    case normalized_path do
+      {:ok, segments} -> {:ok, Enum.reverse(segments)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp path_segments(path) when is_list(path) do
     Enum.reduce_while(path, {:ok, []}, fn segment, {:ok, segments} ->
       case normalize_segment(segment) do
         {:ok, normalized_segment} ->
-          {:cont, {:ok, segments ++ [normalized_segment]}}
+          next_segments = [normalized_segment | segments]
+          {:cont, {:ok, next_segments}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
     end)
+    |> case do
+      {:ok, segments} -> {:ok, Enum.reverse(segments)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp path_segments(path) do

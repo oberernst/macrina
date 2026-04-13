@@ -19,6 +19,16 @@ defmodule Macrina.ResourceTest do
     assert Response.content_format(response) == :text_plain
   end
 
+  test "router dispatch allows a custom not found response" do
+    request = Request.from_uri!(:get, "/missing")
+    not_found = Response.new(:service_unavailable, payload: "later")
+
+    response = Router.dispatch([], request, %{}, not_found: not_found)
+
+    assert response.code == :service_unavailable
+    assert response.payload == "later"
+  end
+
   test "router dispatch negotiates responses by accept content format" do
     request = Request.from_uri!(:get, "/temperature", accept: :application_json)
 
@@ -66,6 +76,14 @@ defmodule Macrina.ResourceTest do
     assert {:ok, [discovery_resource]} = Router.discovery_resources([resource])
     assert discovery_resource.path == ["temperature"]
     assert discovery_resource.attributes == [{"rt", "temperature-c"}, {"ct", [0, 50]}]
+  end
+
+  test "router discovery preserves resource order" do
+    first = Resource.new!("/temperature", get: Response.new(:content, payload: "22.3 C"))
+    second = Resource.new!("/humidity", get: Response.new(:content, payload: "54"))
+
+    assert {:ok, discovery_resources} = Router.discovery_resources([first, second])
+    assert Enum.map(discovery_resources, & &1.path) == [["temperature"], ["humidity"]]
   end
 
   test "router dispatch captures path params into the handler context" do

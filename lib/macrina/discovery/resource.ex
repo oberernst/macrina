@@ -24,12 +24,12 @@ defmodule Macrina.Discovery.Resource do
   end
 
   defp normalize_path(path) when is_binary(path) do
+    trimmed_path = String.trim_leading(path, "/")
+
     normalized_path =
-      path
-      |> String.trim_leading("/")
-      |> case do
+      case trimmed_path do
         "" -> []
-        trimmed_path -> String.split(trimmed_path, "/", trim: false)
+        _path -> String.split(trimmed_path, "/", trim: false)
       end
 
     {:ok, normalized_path}
@@ -52,7 +52,8 @@ defmodule Macrina.Discovery.Resource do
       {name, value}, {:ok, normalized_attributes} ->
         case normalize_attribute(name, value) do
           {:ok, normalized_attribute} ->
-            {:cont, {:ok, normalized_attributes ++ [normalized_attribute]}}
+            next_attributes = [normalized_attribute | normalized_attributes]
+            {:cont, {:ok, next_attributes}}
 
           {:error, reason} ->
             {:halt, {:error, reason}}
@@ -61,6 +62,10 @@ defmodule Macrina.Discovery.Resource do
       attribute, _acc ->
         {:halt, {:error, {:invalid_attribute, attribute}}}
     end)
+    |> case do
+      {:ok, normalized_attributes} -> {:ok, Enum.reverse(normalized_attributes)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp normalize_attributes(attributes) do
@@ -106,12 +111,17 @@ defmodule Macrina.Discovery.Resource do
     Enum.reduce_while(values, {:ok, []}, fn value, {:ok, normalized_values} ->
       case normalize_attribute_list_value(value) do
         {:ok, normalized_value} ->
-          {:cont, {:ok, normalized_values ++ [normalized_value]}}
+          next_values = [normalized_value | normalized_values]
+          {:cont, {:ok, next_values}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
     end)
+    |> case do
+      {:ok, normalized_values} -> {:ok, Enum.reverse(normalized_values)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp normalize_attribute_value(value) do
