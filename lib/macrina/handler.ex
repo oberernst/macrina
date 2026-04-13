@@ -1,5 +1,14 @@
 defmodule Macrina.Handler do
-  alias Macrina.{Block1.Chunk, Connection, Message, Request, Response, Telemetry}
+  alias Macrina.{
+    Block1.Chunk,
+    Connection,
+    Discovery,
+    Message,
+    Request,
+    Response,
+    Router,
+    Telemetry
+  }
 
   @type t :: module() | {:router, module(), map()}
 
@@ -25,7 +34,7 @@ defmodule Macrina.Handler do
     router_context = Map.merge(context, %{connection: connection, peer: peer})
 
     with {:ok, request} <- Request.from_message(message),
-         %Response{} = response <- router.call(request, router_context),
+         %Response{} = response <- router_response(router, request, router_context),
          {:ok, reply} <- Response.to_message(response, message) do
       reply
     else
@@ -44,6 +53,23 @@ defmodule Macrina.Handler do
     else
       nil -> nil
       {:error, reason} -> router_error_response(router, chunk.message, reason)
+    end
+  end
+
+  defp router_response(router, %Request{} = request, router_context) do
+    case discovery_response(router, request, router_context) do
+      {:ok, %Response{} = response} -> response
+      nil -> router.call(request, router_context)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp discovery_response(router, %Request{} = request, router_context) do
+    if Discovery.discovery_request?(request) and Router.supports_discovery?(router) do
+      case router.discover(request, router_context) do
+        nil -> nil
+        resources -> Discovery.response(resources, request)
+      end
     end
   end
 

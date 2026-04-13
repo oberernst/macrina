@@ -1,7 +1,16 @@
 defmodule Macrina.HandlerTest do
   use ExUnit.Case, async: true
 
-  alias Macrina.{Block1.Chunk, Connection, Handler, Message, Message.Opts.Block, Response}
+  alias Macrina.{
+    Block1.Chunk,
+    Connection,
+    Discovery.Resource,
+    Handler,
+    Message,
+    Message.Opts.Block,
+    Request,
+    Response
+  }
 
   defmodule ChunkHandler do
     def call(_connection, %Chunk{} = chunk) do
@@ -34,6 +43,25 @@ defmodule Macrina.HandlerTest do
       if chunk.complete do
         Response.new(:changed)
       end
+    end
+  end
+
+  defmodule DiscoverableRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(request, _context) do
+      send(self(), {:router_call, request.path})
+      Response.new(:content, payload: "fallback")
+    end
+
+    @impl true
+    def discover(request, _context) do
+      send(self(), {:router_discover, request.path, Request.accept(request)})
+
+      [
+        Resource.new!("/status", rt: "health", ct: [0])
+      ]
     end
   end
 
@@ -79,5 +107,26 @@ defmodule Macrina.HandlerTest do
 
     assert_receive {:router_chunk, true, 68, "tail"}
     assert %Message{code: :changed, id: 13, token: <<1, 2, 3, 5>>, type: :ack} = reply
+  end
+
+  test "router handlers serve discovery through the discover callback" do
+    connection = %Connection{ip: {127, 0, 0, 1}, port: 5683}
+
+    request =
+      Message.build!(:get,
+        id: 14,
+        options: [{"Uri-Path", ".well-known"}, {"Uri-Path", "core"}, {"Accept", 40}],
+        token: <<1, 2, 3, 6>>,
+        type: :con
+      )
+
+    reply = Handler.call({:router, DiscoverableRouter, %{}}, connection, request)
+
+    assert_receive {:router_discover, [".well-known", "core"], :application_link_format}
+    refute_receive {:router_call, _path}
+
+    assert reply.payload == "</status>;rt=\"health\";ct=\"0\""
+    assert {"Content-Format", 40} in reply.options
+    assert %Message{code: :content, id: 14, token: <<1, 2, 3, 6>>, type: :ack} = reply
   end
 end

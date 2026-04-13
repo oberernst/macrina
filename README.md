@@ -101,6 +101,100 @@ block1 = Macrina.Block1.new!(mode: :streaming, preferred_block_size: 512)
 {:ok, _server} = Macrina.Server.start_link(router: Demo.Router, port: 5683, block1: block1)
 ```
 
+Routers can also expose CoRE Link Format discovery data for `/.well-known/core`
+by implementing `discover/2` and returning `Macrina.Discovery.Resource`
+entries. The server path answers those requests with
+`application/link-format` and returns `4.06 Not Acceptable` when the request's
+`Accept` option asks for another content format.
+
+```elixir
+defmodule Demo.Router do
+  @behaviour Macrina.Router
+
+  @impl true
+  def call(%Macrina.Request{method: :get, path: ["temperature"]}, _context) do
+    Macrina.Response.new(:content,
+      payload: "22.3 C",
+      content_format: :text_plain
+    )
+  end
+
+  def call(_request, _context) do
+    Macrina.Response.new(:not_found)
+  end
+
+  @impl true
+  def discover(_request, _context) do
+    [
+      Macrina.Discovery.Resource.new!("/temperature", rt: "temperature-c", ct: [0])
+    ]
+  end
+end
+```
+
+For routers that want one source of truth for both path dispatch and discovery,
+`Macrina.Resource` and `Macrina.Router.dispatch/3` provide a data-driven path.
+The same resource list can drive request handling, `Accept`-based content
+negotiation, `path_params` extraction in the router context, and
+`/.well-known/core` discovery.
+
+```elixir
+defmodule Demo.Router do
+  @behaviour Macrina.Router
+
+  alias Macrina.{Request, Resource, Response, Router}
+
+  defp resources do
+    [
+      Resource.new!("/temperature",
+        attributes: [rt: "temperature-c", ct: [0, 50]],
+        get: [
+          text_plain: Response.new(:content, payload: "22.3 C"),
+          application_json: fn _request, _context ->
+            Response.new(:content, payload: "{\"value\":\"22.3 C\"}")
+          end
+        ]
+      ),
+      Resource.new!("/devices/:device_id",
+        discovery_path: "/devices",
+        attributes: [rt: "device-id", ct: [0]],
+        get: fn _request, context ->
+          Macrina.Response.new(:content,
+            payload: Map.fetch!(context.path_params, :device_id),
+            content_format: :text_plain
+          )
+        end
+      ),
+      Resource.new!("/files/*path",
+        discovery_path: "/files",
+        attributes: [rt: "file-collection", ct: [0]],
+        get: fn _request, context ->
+          Macrina.Response.new(:content,
+            payload: Enum.join(Map.fetch!(context.path_params, :path), "/"),
+            content_format: :text_plain
+          )
+        end
+      )
+    ]
+  end
+
+  @impl true
+  def call(%Request{} = request, context) do
+    Router.dispatch(resources(), request, context)
+  end
+
+  @impl true
+  def discover(_request, _context) do
+    Router.discovery_resources!(resources())
+  end
+end
+```
+
+Route params use `:name` segments and subtree captures use terminal `*name`
+segments. Dynamic resources must either provide a concrete `discovery_path` or
+set `discoverable: false` so the library does not publish placeholder paths in
+`/.well-known/core`.
+
 ### `Macrina.Endpoint`
 A thin `GenServer` wrapper around `:gen_udp`. Given an IP and port, any incoming UDP packets at that port will be sent to the `Endpoint`. This is done via `GenServer`'s built-in `handle_info` functionality.
 

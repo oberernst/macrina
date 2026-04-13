@@ -1,12 +1,55 @@
 defmodule Macrina.Router do
-  alias Macrina.{Block1.Chunk, Request, Response}
+  alias Macrina.{Block1.Chunk, Request, Resource, Response}
+  alias Macrina.Discovery.Resource, as: DiscoveryResource
 
   @callback call(Request.t(), map()) :: Response.t() | nil
   @callback block1(Chunk.t(), map()) :: Response.t() | nil
+  @callback discover(Request.t(), map()) :: [DiscoveryResource.t()] | nil
 
-  @optional_callbacks block1: 2
+  @optional_callbacks block1: 2, discover: 2
+
+  def dispatch(resources, %Request{} = request, context, opts \\ [])
+      when is_list(resources) and is_map(context) and is_list(opts) do
+    not_found = Keyword.get(opts, :not_found, Response.new(:not_found))
+
+    case Enum.find(resources, &Resource.match?(&1, request)) do
+      %Resource{} = resource -> Resource.call(resource, request, context)
+      nil -> not_found
+    end
+  end
+
+  def discovery_resources(resources) when is_list(resources) do
+    Enum.reduce_while(resources, {:ok, []}, fn
+      %Resource{} = resource, {:ok, discovery_resources} ->
+        case Resource.discovery_resource(resource) do
+          :skip ->
+            {:cont, {:ok, discovery_resources}}
+
+          {:ok, %DiscoveryResource{} = discovery_resource} ->
+            next_resources = discovery_resources ++ [discovery_resource]
+            {:cont, {:ok, next_resources}}
+
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
+
+      resource, _acc ->
+        {:halt, {:error, {:invalid_resource, resource}}}
+    end)
+  end
+
+  def discovery_resources!(resources) when is_list(resources) do
+    case discovery_resources(resources) do
+      {:ok, discovery_resources} -> discovery_resources
+      {:error, reason} -> raise ArgumentError, "invalid router resources: #{inspect(reason)}"
+    end
+  end
 
   def supports_block1_streaming?(router) when is_atom(router) do
     function_exported?(router, :block1, 2)
+  end
+
+  def supports_discovery?(router) when is_atom(router) do
+    function_exported?(router, :discover, 2)
   end
 end
