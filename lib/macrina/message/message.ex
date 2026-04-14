@@ -304,8 +304,10 @@ defmodule Macrina.Message do
   end
 
   defp decode_type(type) do
-    decoded_type = Types.parse(type)
-    {:ok, decoded_type}
+    case Types.decode(type) do
+      {:ok, decoded_type} -> {:ok, decoded_type}
+      :error -> {:error, :invalid_type}
+    end
   end
 
   defp encode_code(code) do

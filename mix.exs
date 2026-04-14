@@ -27,6 +27,17 @@ defmodule Macrina.MixProject do
       package: [
         licenses: ["MIT"],
         links: %{"GitHub" => "https://github.com/oberernst/macrina"}
+      ],
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test,
+        "coveralls.json": :test
+      ],
+      dialyzer: [
+        plt_add_apps: [:ex_unit, :mix],
+        flags: [:error_handling, :unknown, :unmatched_returns]
       ]
     ]
   end
@@ -43,7 +54,12 @@ defmodule Macrina.MixProject do
   defp deps do
     [
       {:telemetry, "~> 1.0"},
-      {:ex_doc, "~> 0.38", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.38", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:stream_data, "~> 1.1", only: [:dev, :test]},
+      {:benchee, "~> 1.3", only: [:dev, :test]},
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
 end

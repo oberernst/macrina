@@ -1,11 +1,9 @@
 defmodule Macrina.Exchange do
-  @moduledoc """
-  Pure protocol state for a single peer exchange lifecycle.
+  @moduledoc false
 
-  `Macrina.Connection.Server` owns socket orchestration; this module owns the
-  token, message-id, caller, cached-reply, and blockwise tracking that sits
-  behind that shell.
-  """
+  # Pure protocol state for a single peer exchange lifecycle. Owns the token,
+  # message-id, caller, cached-reply, and blockwise tracking that sits behind
+  # `Macrina.Connection.Server`'s effectful shell.
 
   alias Macrina.{Blockwise, Message, Message.Opts.Block, Telemetry}
 

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find lib:*)",
+      "Bash(wc -l test/*.exs)",
+      "Bash(cat .github/workflows/*.yml)",
+      "Bash(git check-ignore:*)",
+      "Bash(mix deps.get)",
+      "Bash(elixir --version)",
+      "Bash(asdf current:*)",
+      "Bash(mise which:*)",
+      "Bash(mise exec:*)"
+    ]
+  }
+}

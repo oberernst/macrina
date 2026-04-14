@@ -1,21 +1,10 @@
 defmodule Macrina.Observe do
-  @moduledoc """
-  Server-side observe registry (RFC 7641).
+  @moduledoc false
 
-  A singleton GenServer that tracks active observe relationships across
-  all endpoints and connections. It maintains three synchronized indexes:
-
-    * `subscriptions` — canonical store, keyed by `{endpoint, connection, token}`
-    * `paths` — reverse index from `{endpoint, path}` to subscription keys
-    * `connections` — reverse index from connection pid to subscription keys
-
-  Sequence numbers are managed atomically so that `notifications/2` can
-  increment and return the next observe value for every active subscriber
-  on a given path in a single call.
-
-  Typically not used directly — `Macrina.Server.notify/3` and
-  `Macrina.Client.observe/3` wrap the registry calls.
-  """
+  # Server-side observe registry (RFC 7641). VM-wide singleton GenServer with
+  # three synchronized indexes (subscriptions, paths, connections). Wrapped by
+  # `Macrina.Server.notify/3` and `Macrina.Client.observe/3`. Planned for
+  # per-endpoint decomposition in Wave C.
 
   use GenServer
 

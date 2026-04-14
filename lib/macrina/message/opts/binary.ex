@@ -1,24 +1,8 @@
 defmodule Macrina.Message.Opts.Binary do
-  @moduledoc """
-  This module provides functions for decoding and encoding binary options in the Macrina.Message.Opts module.
+  @moduledoc false
 
-  ## Decoder Functions
-  - `decode/3`: Decodes a binary message into a list of options and a payload.
-  - `decode_block/1`: Decodes a binary block option into a `Macrina.Message.Opts.Block` struct.
-  - `decode_length/2`: Decodes the length of an option from a binary.
-  - `decode_number/3`: Decodes the number of an option from a binary.
-  - `decode_value/3`: Decodes the value of an option from a binary.
-
-  ## Encoder Functions
-  - `encode/1`: Encodes a list of options into a binary message.
-  - `encode_block/3`: Encodes a block option into a binary.
-  - `encode_value/1`: Encodes the value of an option into a binary.
-  - `encode_ext/1`: Encodes an extended value for delta or length into a binary.
-
-  ## Types
-  - `option`: A tuple representing an option with a name and value.
-  - `payload`: A binary representing the payload of a message.
-  """
+  # Binary codec for CoAP options (RFC 7252 §3.1). Handles delta/length
+  # extension bytes, block option packing, and payload-marker detection.
 
   alias Macrina.Message.{Opts, Opts.Block}
 

@@ -26,3 +26,6 @@ macrina-*.tar
 /tmp/
 
 .elixir_ls
+
+# Private planning notes (not shipped).
+/notes/

@@ -1,20 +1,9 @@
 defmodule Macrina.Connection.Server do
-  @moduledoc """
-  Per-peer connection GenServer.
+  @moduledoc false
 
-  Manages the full lifecycle of a single CoAP peer exchange over UDP:
-  sending and receiving messages, retransmission with exponential back-off,
-  Block1/Block2 transfer assembly, duplicate detection with cached replies,
-  and Observe subscription state for both client and server roles.
-
-  One `Connection.Server` is spawned per unique remote `{ip, port}` pair
-  by `Macrina.Endpoint`. The process idles with a five-minute timeout and
-  exits `:normal` when inactive, which lets the `DynamicSupervisor` clean
-  it up.
-
-  Pure protocol state lives in `Macrina.Exchange`; this module handles
-  I/O, timers, and GenServer orchestration.
-  """
+  # Per-peer connection GenServer. One process per unique remote {ip, port},
+  # spawned by `Macrina.Endpoint` and supervised by `ConnectionSupervisor`.
+  # Pure protocol state lives in `Macrina.Exchange`.
 
   use GenServer, restart: :transient
 

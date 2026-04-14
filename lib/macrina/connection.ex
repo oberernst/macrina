@@ -1,15 +1,8 @@
 defmodule Macrina.Connection do
-  @moduledoc """
-  Per-peer connection state.
+  @moduledoc false
 
-  An immutable struct capturing the complete state of a single CoAP peer
-  relationship: socket, handler, protocol parameters, exchange bookkeeping,
-  and observe subscriptions. All state mutations delegate to
-  `Macrina.Exchange` for token/ID/caller/block/reply tracking.
-
-  This module exposes pure getter and updater functions — no side effects.
-  The effectful shell lives in `Macrina.Connection.Server`.
-  """
+  # Per-peer connection state. Immutable struct plus pure getter/updater
+  # functions. The effectful shell lives in `Macrina.Connection.Server`.
 
   alias Macrina.{Exchange, Handler, Message}
 

@@ -1,10 +1,8 @@
 defmodule Macrina.Blockwise do
-  @moduledoc """
-  Pure helpers for CoAP Block1 and Block2 transfer state.
+  @moduledoc false
 
-  Transfer state is keyed per logical exchange so concurrent blockwise traffic on
-  a single peer does not collide in a shared payload bucket.
-  """
+  # Pure helpers for CoAP Block1/Block2 transfer state, keyed per logical
+  # exchange so concurrent blockwise traffic on a single peer does not collide.
 
   alias Macrina.{Codes, Message, Message.Opts.Block}
 

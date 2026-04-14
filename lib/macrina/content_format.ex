@@ -1,11 +1,9 @@
 defmodule Macrina.ContentFormat do
-  @moduledoc """
-  Content-Format codec (RFC 7252, Section 12.3).
+  @moduledoc false
 
-  Maps between human-readable atoms (`:text_plain`, `:application_json`, etc.)
-  and their integer wire values. Unknown integer values pass through unchanged
-  for forward compatibility with newer IANA registry entries.
-  """
+  # Content-Format codec (RFC 7252 §12.3). Maps atoms like `:text_plain` to
+  # integer wire values; unknown integers pass through unchanged for forward
+  # compatibility with newer IANA entries.
   @formats_by_name %{
     text_plain: 0,
     application_link_format: 40,

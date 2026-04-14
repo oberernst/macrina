@@ -1,10 +1,7 @@
 defmodule Macrina.Codes do
-  @moduledoc """
-  Bidirectional codec for CoAP method and response codes.
+  @moduledoc false
 
-  Maps between atoms (`:get`, `:content`, `:not_found`, etc.) and their
-  binary `{class, detail}` tuples as defined in RFC 7252, Section 12.1.
-  """
+  # Bidirectional codec for CoAP method and response codes (RFC 7252 §12.1).
   @method_codes ~w(empty get post put delete)a
   @response_codes ~w(request_entity_incomplete created deleted valid continue changed content bad_request unauthorized bad_option forbidden not_found method_not_allowed not_acceptable precondition_failed request_entity_too_large unsupported_content_format internal_server_error not_implemented bad_gateway service_unavailable gateway_timeout  proxying_not_supported)a
   @codes_by_number %{
@@ -52,23 +49,5 @@ defmodule Macrina.Codes do
   @spec encode(atom()) :: {:ok, {integer(), integer()}} | :error
   def encode(code) when is_atom(code) do
     Map.fetch(@numbers_by_code, code)
-  end
-
-  # Method Codes
-  @spec parse(integer(), integer()) :: atom()
-  def parse(c, dd) do
-    case decode(c, dd) do
-      {:ok, code} -> code
-      :error -> raise("unassigned code: #{c}, #{dd}")
-    end
-  end
-
-  # Method Codes
-  @spec parse(atom()) :: {integer(), integer()}
-  def parse(code) do
-    case encode(code) do
-      {:ok, parts} -> parts
-      :error -> raise("unassigned code: #{code}")
-    end
   end
 end
