@@ -22,7 +22,8 @@ defmodule Macrina.Peer.Session do
     Peer.State,
     Request,
     Response,
-    Telemetry
+    Telemetry,
+    Transport.UDP
   }
 
   import State, only: :functions
@@ -48,8 +49,8 @@ defmodule Macrina.Peer.Session do
 
       with {:ok, block1} <- build_block1_policy(args) do
         state =
-          connection_state(
-            endpoint,
+          endpoint
+          |> connection_state(
             handler,
             ip,
             port,
@@ -59,10 +60,28 @@ defmodule Macrina.Peer.Session do
             exchange_lifetime,
             max_retransmit
           )
+          |> with_message_id_counter(args)
 
         GenServer.start_link(__MODULE__, state, name: name)
       end
     end
+  end
+
+  # Per-endpoint atomic counter (Wave C). When spawned by `Macrina.Transport.UDP`
+  # we get the endpoint's shared counter; when spawned directly (tests, ad-hoc
+  # client setups), fall back to a fresh per-session counter so the session
+  # always has a stamping-source.
+  defp with_message_id_counter(%State{} = state, args) do
+    counter = Keyword.get(args, :message_id_counter) || :atomics.new(1, signed: false)
+    %State{state | message_id_counter: counter}
+  end
+
+  # Overwrites a message's id with the next value from the per-endpoint
+  # counter. Used for outbound messages this session originates (observe
+  # block2 follow-ups, server-side observer notifications) — anywhere we
+  # would otherwise inherit `Macrina.Message.build/2`'s random fallback.
+  defp stamp_message_id(%State{message_id_counter: ref}, %Message{} = message) do
+    %Message{message | id: UDP.next_message_id(ref)}
   end
 
   defp build_block1_policy(args) do
@@ -939,6 +958,7 @@ defmodule Macrina.Peer.Session do
     request = %Request{request | id: nil, token: subscription.token}
 
     with {:ok, next_message} <- Request.to_message(request),
+         next_message = stamp_message_id(state, next_message),
          {:ok, packet} <- Message.encode(next_message) do
       :gen_udp.send(state.socket, {state.ip, state.port}, packet)
       state
@@ -970,6 +990,7 @@ defmodule Macrina.Peer.Session do
     }
 
     with {:ok, message} <- Response.to_message(notification_response, nil),
+         message = stamp_message_id(state, message),
          {:ok, packet} <- Message.encode(message) do
       send_reply(state, packet, %{
         code: message.code,

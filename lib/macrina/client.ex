@@ -95,7 +95,8 @@ defmodule Macrina.Client do
   def build(ip, port, endpoint \\ UDP) do
     with {:ok, socket} <- UDP.socket(endpoint),
          {:ok, handler} <- UDP.handler(endpoint),
-         {:ok, conn} <- start_connection(handler, ip, port, socket) do
+         {:ok, counter} <- UDP.message_id_counter(endpoint),
+         {:ok, conn} <- start_connection(handler, ip, port, socket, counter) do
       client = %__MODULE__{conn: conn, ip: ip, port: port}
       {:ok, client}
     end
@@ -363,8 +364,17 @@ defmodule Macrina.Client do
     end
   end
 
-  defp start_connection(handler, ip, port, socket) do
-    case Session.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
+  defp start_connection(handler, ip, port, socket, message_id_counter) do
+    args = [
+      handler: handler,
+      ip: ip,
+      message_id_counter: message_id_counter,
+      port: port,
+      socket: socket,
+      type: :client
+    ]
+
+    case Session.start_link(args) do
       {:ok, conn} -> {:ok, conn}
       {:error, {:already_started, conn}} -> {:ok, conn}
       {:error, reason} -> {:error, reason}

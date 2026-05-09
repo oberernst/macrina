@@ -132,4 +132,39 @@ defmodule Macrina.Transport.UDPTest do
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
              UDP.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
   end
+
+  describe "next_message_id/1" do
+    # Wave C replaced `Enum.random(10000..19999)` per-message with a
+    # per-endpoint atomic counter. The ref lives on `Macrina.Transport.UDP`
+    # state; this test pins down the wrap and monotonic-modulo-65536
+    # behaviour without standing up a real socket.
+
+    test "returns sequential ids modulo 65_536 for a fresh counter" do
+      ref = :atomics.new(1, signed: false)
+
+      ids = for _ <- 1..5, do: UDP.next_message_id(ref)
+
+      # Five sequential calls produce five consecutive values; with a fresh
+      # counter that's [1, 2, 3, 4, 5].
+      assert ids == [1, 2, 3, 4, 5]
+    end
+
+    test "wraps around at 65_536" do
+      ref = :atomics.new(1, signed: false)
+      :atomics.put(ref, 1, 65_534)
+
+      assert UDP.next_message_id(ref) == 65_535
+      assert UDP.next_message_id(ref) == 0
+      assert UDP.next_message_id(ref) == 1
+    end
+
+    test "stays within the 16-bit range no matter what the underlying counter holds" do
+      ref = :atomics.new(1, signed: false)
+      :atomics.put(ref, 1, 1_000_000)
+
+      id = UDP.next_message_id(ref)
+
+      assert id >= 0 and id <= 65_535
+    end
+  end
 end

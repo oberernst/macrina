@@ -8,6 +8,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Per-endpoint atomic message-id counter. `Macrina.Transport.UDP` now owns
+  an `:atomics` ref seeded at endpoint start; `Macrina.Peer.Session` reads it
+  via `Macrina.Transport.UDP.next_message_id/1` (a pure ref-based helper —
+  no GenServer round-trip per message). Sessions spawned outside a UDP
+  endpoint (tests, ad-hoc setups) get a fresh per-session counter as
+  fallback. Observer notifications and observe block2 follow-up requests
+  use the counter; the random `Enum.random(10000..19999)` fallback in
+  `Macrina.Message.build/2` remains for direct test fixture construction.
 - Codec hot-path optimisations. `Macrina.Message.Opts.name/1` and
   `Macrina.Message.Opts.number/1` now use compile-time maps instead of an
   `Enum.find/2` linear scan over a 19-tuple list.

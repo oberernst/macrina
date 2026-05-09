@@ -9,8 +9,9 @@ defmodule Macrina.Transport.UDP do
   alias Macrina.{Block1, ConnectionSupervisor, Peer.Session, Router, Telemetry}
 
   @connection_option_keys [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
+  @message_id_modulus 65_536
 
-  defstruct [:handler, :socket, connection_opts: []]
+  defstruct [:handler, :message_id_counter, :socket, connection_opts: []]
 
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
@@ -47,6 +48,7 @@ defmodule Macrina.Transport.UDP do
         state = %__MODULE__{
           connection_opts: Keyword.take(args, @connection_option_keys),
           handler: handler,
+          message_id_counter: new_message_id_counter(),
           socket: socket
         }
 
@@ -55,6 +57,38 @@ defmodule Macrina.Transport.UDP do
       {:error, reason} ->
         {:stop, reason}
     end
+  end
+
+  # Per-endpoint atomic counter, replacing the prior `Enum.random(10000..19999)`
+  # default. Seeded with a random initial value so two endpoints in the same
+  # VM that happen to talk to overlapping peers don't collide on their first
+  # outbound message id. RFC 7252 §4.4 only requires monotonic-with-wrap
+  # within a single conversation; the seed avoids cross-endpoint birthday
+  # collisions cheaply.
+  defp new_message_id_counter do
+    ref = :atomics.new(1, signed: false)
+    :atomics.put(ref, 1, :rand.uniform(@message_id_modulus) - 1)
+    ref
+  end
+
+  @doc """
+  Returns the next CoAP message id for an endpoint counter, wrapping at
+  2^16. Pure helper that takes the `:atomics` ref directly so the caller
+  doesn't have to round-trip through a `GenServer.call`.
+  """
+  @spec next_message_id(:atomics.atomics_ref()) :: 0..65_535
+  def next_message_id(ref) do
+    rem(:atomics.add_get(ref, 1, 1), @message_id_modulus)
+  end
+
+  @doc """
+  Fetches the per-endpoint message-id atomics ref. `Macrina.Client.build/3`
+  uses this once at connection setup so each `Macrina.Peer.Session` can
+  bump the counter without further IPC.
+  """
+  @spec message_id_counter(GenServer.server()) :: {:ok, :atomics.atomics_ref()} | {:error, term()}
+  def message_id_counter(endpoint \\ __MODULE__) do
+    safe_call(endpoint, :message_id_counter)
   end
 
   def handler(endpoint \\ __MODULE__) do
@@ -71,6 +105,10 @@ defmodule Macrina.Transport.UDP do
     {:reply, {:ok, state.handler}, state}
   end
 
+  def handle_call(:message_id_counter, _from, state) do
+    {:reply, {:ok, state.message_id_counter}, state}
+  end
+
   def handle_call(:socket, _from, state) do
     {:reply, {:ok, state.socket}, state}
   end
@@ -84,7 +122,14 @@ defmodule Macrina.Transport.UDP do
     conn_name = Macrina.Peer.label(ip, port)
 
     child_args =
-      [endpoint: self(), handler: state.handler, ip: ip, port: port, socket: socket]
+      [
+        endpoint: self(),
+        handler: state.handler,
+        ip: ip,
+        message_id_counter: state.message_id_counter,
+        port: port,
+        socket: socket
+      ]
       |> Keyword.merge(state.connection_opts)
 
     init_args = {Session, child_args}
