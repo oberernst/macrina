@@ -16,6 +16,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced the raising `Macrina.Types.parse/1` shim with a non-raising
   `Macrina.Types.decode/1` call inside the message decoder. The unused
   `Macrina.Codes.parse/1,2` helpers were removed.
+- `Macrina.Server.start_link/1` no longer re-normalises the `:block1` option;
+  `Macrina.Endpoint` is the single site that expands a `Macrina.Block1` policy
+  into raw connection options. Behaviour is unchanged.
+- `Macrina.Connection` now stores the Block1 policy as a single
+  `:block1` field (a `%Macrina.Block1{}` struct) rather than three sibling
+  `block1_*` fields. The raw keyword options on `Macrina.Connection.Server`
+  still accept `:block1_max_body_size`, `:block1_mode`, and
+  `:block1_preferred_block_size`; internally they are folded into the policy
+  struct.
+- Extracted the pure observe-client bookkeeping into
+  `Macrina.Observe.ClientSession` (internal); `Macrina.Connection.Server`
+  now delegates the subscription/transfer/staleness state machine there.
+- Extracted the pure reply-cache helpers into `Macrina.Exchange.Dedup`
+  (internal); `Macrina.Exchange.cache_reply/4` and `cached_reply/4`
+  delegate to it.
+- Removed the dead `@callback Macrina.Handler.call/2` declaration. No module
+  declared `@behaviour Macrina.Handler`; handlers pass a plain module that
+  exports `call/2`.
 
 ### Added
 

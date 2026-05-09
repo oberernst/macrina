@@ -8,6 +8,7 @@ defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
 
   alias Macrina.{
+    Block1,
     Block1.Chunk,
     Blockwise,
     Codes,
@@ -17,6 +18,7 @@ defmodule Macrina.Connection.Server do
     Message,
     Message.Opts.Block,
     Observe,
+    Observe.ClientSession,
     Observe.Subscription,
     Request,
     Response,
@@ -28,7 +30,6 @@ defmodule Macrina.Connection.Server do
   @call_timeout :timer.seconds(10)
   @timeout :timer.minutes(5)
   @default_ack_timeout 2_000
-  @default_block1_max_body_size :infinity
   @default_exchange_lifetime 247_000
   @default_max_retransmit 4
   @request_codes Codes.method_codes()
@@ -41,33 +42,35 @@ defmodule Macrina.Connection.Server do
          {:ok, socket} <- fetch_opt(args, :socket) do
       name = connection_name(args, ip, port)
       ack_timeout = Keyword.get(args, :ack_timeout, @default_ack_timeout)
-
-      block1_max_body_size =
-        Keyword.get(args, :block1_max_body_size, @default_block1_max_body_size)
-
-      block1_mode = Keyword.get(args, :block1_mode, :atomic)
-      block1_preferred_block_size = Keyword.get(args, :block1_preferred_block_size)
       endpoint = Keyword.get(args, :endpoint)
       exchange_lifetime = Keyword.get(args, :exchange_lifetime, @default_exchange_lifetime)
       max_retransmit = Keyword.get(args, :max_retransmit, @default_max_retransmit)
 
-      state =
-        connection_state(
-          endpoint,
-          handler,
-          ip,
-          port,
-          socket,
-          ack_timeout,
-          block1_max_body_size,
-          block1_mode,
-          block1_preferred_block_size,
-          exchange_lifetime,
-          max_retransmit
-        )
+      with {:ok, block1} <- build_block1_policy(args) do
+        state =
+          connection_state(
+            endpoint,
+            handler,
+            ip,
+            port,
+            socket,
+            ack_timeout,
+            block1,
+            exchange_lifetime,
+            max_retransmit
+          )
 
-      GenServer.start_link(__MODULE__, state, name: name)
+        GenServer.start_link(__MODULE__, state, name: name)
+      end
     end
+  end
+
+  defp build_block1_policy(args) do
+    Block1.new(
+      max_body_size: Keyword.get(args, :block1_max_body_size, :infinity),
+      mode: Keyword.get(args, :block1_mode, :atomic),
+      preferred_block_size: Keyword.get(args, :block1_preferred_block_size)
+    )
   end
 
   def call(pid, message, timeout \\ @call_timeout) do
@@ -408,17 +411,13 @@ defmodule Macrina.Connection.Server do
          port,
          socket,
          ack_timeout,
-         block1_max_body_size,
-         block1_mode,
-         block1_preferred_block_size,
+         %Block1{} = block1,
          exchange_lifetime,
          max_retransmit
        ) do
     %Connection{
       ack_timeout: ack_timeout,
-      block1_max_body_size: block1_max_body_size,
-      block1_mode: block1_mode,
-      block1_preferred_block_size: block1_preferred_block_size,
+      block1: block1,
       endpoint: endpoint,
       exchange: %Exchange{},
       exchange_lifetime: exchange_lifetime,
@@ -586,7 +585,10 @@ defmodule Macrina.Connection.Server do
     })
   end
 
-  defp maybe_continue_block1_transfer(%Connection{block1_mode: :streaming} = state, message) do
+  defp maybe_continue_block1_transfer(
+         %Connection{block1: %Block1{mode: :streaming}} = state,
+         message
+       ) do
     if block1_transfer_too_large?(state, message) do
       reply_too_large_transfer(state, message)
     else
@@ -606,7 +608,10 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp maybe_complete_block1_transfer(%Connection{block1_mode: :streaming} = state, message) do
+  defp maybe_complete_block1_transfer(
+         %Connection{block1: %Block1{mode: :streaming}} = state,
+         message
+       ) do
     if block1_transfer_too_large?(state, message) do
       reply_too_large_transfer(state, message)
     else
@@ -623,11 +628,17 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp block1_transfer_too_large?(%Connection{block1_max_body_size: :infinity}, _message) do
+  defp block1_transfer_too_large?(
+         %Connection{block1: %Block1{max_body_size: :infinity}},
+         _message
+       ) do
     false
   end
 
-  defp block1_transfer_too_large?(%Connection{block1_max_body_size: limit} = state, message)
+  defp block1_transfer_too_large?(
+         %Connection{block1: %Block1{max_body_size: limit}} = state,
+         message
+       )
        when is_integer(limit) and limit >= 0 do
     case block_transfer(state, message) do
       {:ok, %{bytes: bytes}} -> bytes > limit
@@ -725,7 +736,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp block1_response_block_size(
-         %Connection{block1_preferred_block_size: preferred_block_size},
+         %Connection{block1: %Block1{preferred_block_size: preferred_block_size}},
          %Block{size: request_block_size}
        )
        when is_integer(preferred_block_size) and preferred_block_size > 0 do
@@ -821,7 +832,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle_observe_response(%Connection{} = state, %Message{} = message) do
-    case observe_subscription(state, message.token) do
+    case ClientSession.fetch(state.observe_subscriptions, message.token) do
       {:ok, subscription_entry} ->
         next_state =
           state
@@ -842,7 +853,7 @@ defmodule Macrina.Connection.Server do
        ) do
     observe_value = message_option(message.options, "Observe")
 
-    if stale_observe?(subscription_entry, observe_value) do
+    if ClientSession.stale?(subscription_entry, observe_value) do
       state
     else
       next_observe = observe_value || subscription_entry.last_observe
@@ -987,65 +998,37 @@ defmodule Macrina.Connection.Server do
   end
 
   defp put_observe_subscription(
-         %Connection{} = state,
+         %Connection{observe_subscriptions: session} = state,
          %Subscription{} = subscription,
          observe_value
        ) do
-    entry = %{
-      last_observe: observe_value,
-      subscription: subscription,
-      token: subscription.token,
-      transfers: %{}
+    %Connection{
+      state
+      | observe_subscriptions: ClientSession.put(session, subscription, observe_value)
     }
-
-    put_observe_entry(state, entry)
   end
 
-  defp put_observe_entry(%Connection{observe_subscriptions: subscriptions} = state, entry) do
-    next_subscriptions = Map.put(subscriptions, entry.token, entry)
-    %Connection{state | observe_subscriptions: next_subscriptions}
+  defp put_observe_entry(%Connection{observe_subscriptions: session} = state, entry) do
+    %Connection{state | observe_subscriptions: Map.put(session, entry.token, entry)}
   end
 
-  defp observe_subscription(%Connection{observe_subscriptions: subscriptions}, token) do
-    Map.fetch(subscriptions, token)
+  defp drop_observe_subscription(%Connection{observe_subscriptions: session} = state, token) do
+    %Connection{state | observe_subscriptions: ClientSession.drop(session, token)}
   end
 
-  defp drop_observe_subscription(%Connection{observe_subscriptions: subscriptions} = state, token) do
-    next_subscriptions = Map.delete(subscriptions, token)
-    %Connection{state | observe_subscriptions: next_subscriptions}
+  defp put_observe_transfers(
+         %Connection{observe_subscriptions: session} = state,
+         token,
+         transfers
+       ) do
+    %Connection{
+      state
+      | observe_subscriptions: ClientSession.put_transfers(session, token, transfers)
+    }
   end
 
-  defp put_observe_transfers(%Connection{} = state, token, transfers) do
-    case observe_subscription(state, token) do
-      {:ok, entry} -> put_observe_entry(state, %{entry | transfers: transfers})
-      :error -> state
-    end
-  end
-
-  defp clear_observe_transfers(%Connection{} = state, token) do
-    put_observe_transfers(state, token, %{})
-  end
-
-  defp stale_observe?(%{last_observe: nil}, _observe_value) do
-    false
-  end
-
-  defp stale_observe?(%{}, nil) do
-    false
-  end
-
-  defp stale_observe?(%{last_observe: last_observe}, observe_value)
-       when observe_value < last_observe do
-    true
-  end
-
-  defp stale_observe?(%{last_observe: last_observe, transfers: transfers}, observe_value)
-       when observe_value == last_observe do
-    map_size(transfers) == 0
-  end
-
-  defp stale_observe?(%{}, _observe_value) do
-    false
+  defp clear_observe_transfers(%Connection{observe_subscriptions: session} = state, token) do
+    %Connection{state | observe_subscriptions: ClientSession.clear_transfers(session, token)}
   end
 
   defp normalize_notification_type(%Response{type: type} = response) when type in [:con, :non] do

@@ -9,7 +9,8 @@
       "Bash(elixir --version)",
       "Bash(asdf current:*)",
       "Bash(mise which:*)",
-      "Bash(mise exec:*)"
+      "Bash(mise exec:*)",
+      "Bash(wc -l /home/tory/work/macrina/lib/macrina/**/*.ex /home/tory/work/macrina/lib/macrina/*.ex)"
     ]
   }
 }

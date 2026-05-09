@@ -2,8 +2,8 @@ defmodule Macrina.Handler do
   @moduledoc false
 
   # Internal dispatch bridge. Routes decoded messages to a raw handler module
-  # or a `Macrina.Router` implementation. Scheduled for removal in Wave B;
-  # `Macrina.Router` is the only public callback contract.
+  # or a `Macrina.Router` implementation. `Macrina.Router` is the only public
+  # callback contract.
   alias Macrina.{
     Block1.Chunk,
     Connection,
@@ -16,8 +16,6 @@ defmodule Macrina.Handler do
   }
 
   @type t :: module() | {:router, module(), map()}
-
-  @callback call(Connection.t(), Message.t() | Chunk.t() | binary()) :: Message.t() | nil
 
   def call(handler, %Connection{} = connection, %Message{} = message) do
     case handler do

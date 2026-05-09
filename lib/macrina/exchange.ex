@@ -5,9 +5,9 @@ defmodule Macrina.Exchange do
   # message-id, caller, cached-reply, and blockwise tracking that sits behind
   # `Macrina.Connection.Server`'s effectful shell.
 
-  alias Macrina.{Blockwise, Message, Message.Opts.Block, Telemetry}
+  alias Macrina.{Blockwise, Exchange.Dedup, Message, Message.Opts.Block, Telemetry}
 
-  @type reply_entry :: %{reply: binary() | nil, stored_at: integer()}
+  @type reply_entry :: Dedup.entry()
 
   defstruct blocks: %{}, callers: [], ids: [], replies: %{}, requests: %{}, tokens: []
 
@@ -25,7 +25,7 @@ defmodule Macrina.Exchange do
           blocks: %{optional(Blockwise.transfer_key()) => Blockwise.transfer()},
           callers: [{binary(), tuple()}],
           ids: [non_neg_integer()],
-          replies: %{optional(non_neg_integer()) => reply_entry()},
+          replies: Dedup.t(),
           requests: %{optional(binary()) => pending_request()},
           tokens: [binary()]
         }
@@ -163,10 +163,7 @@ defmodule Macrina.Exchange do
   @spec cache_reply(t(), Message.t(), binary() | nil, integer()) :: t()
   def cache_reply(%__MODULE__{replies: replies} = exchange, %Message{id: id}, reply, now)
       when is_binary(reply) or is_nil(reply) do
-    reply_entry = %{reply: reply, stored_at: now}
-    next_replies = Map.put(replies, id, reply_entry)
-
-    %__MODULE__{exchange | replies: next_replies}
+    %__MODULE__{exchange | replies: Dedup.put(replies, id, reply, now)}
   end
 
   @spec cached_reply(t(), Message.t()) :: {:ok, binary() | nil} | :error
@@ -178,17 +175,7 @@ defmodule Macrina.Exchange do
           {:ok, binary() | nil} | :error
   def cached_reply(%__MODULE__{replies: replies}, %Message{id: id}, now, lifetime)
       when is_integer(now) do
-    case Map.fetch(replies, id) do
-      {:ok, %{reply: reply, stored_at: stored_at}} ->
-        if reply_expired?(stored_at, now, lifetime) do
-          :error
-        else
-          {:ok, reply}
-        end
-
-      :error ->
-        :error
-    end
+    Dedup.fetch(replies, id, now, lifetime)
   end
 
   @spec pending_request(t(), binary()) :: {:ok, pending_request()} | :error
@@ -276,14 +263,6 @@ defmodule Macrina.Exchange do
 
   defp put_request(%__MODULE__{requests: requests} = exchange, token, request) do
     %__MODULE__{exchange | requests: Map.put(requests, token, request)}
-  end
-
-  defp reply_expired?(_stored_at, _now, :infinity) do
-    false
-  end
-
-  defp reply_expired?(stored_at, now, lifetime) when is_integer(lifetime) and lifetime >= 0 do
-    now - stored_at >= lifetime
   end
 
   defp emit_missing_block(missing_block, received_blocks) do

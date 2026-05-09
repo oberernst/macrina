@@ -29,3 +29,6 @@ macrina-*.tar
 
 # Private planning notes (not shipped).
 /notes/
+
+# Local agent instructions (not shipped).
+/CLAUDE.md

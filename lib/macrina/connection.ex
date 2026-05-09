@@ -4,12 +4,10 @@ defmodule Macrina.Connection do
   # Per-peer connection state. Immutable struct plus pure getter/updater
   # functions. The effectful shell lives in `Macrina.Connection.Server`.
 
-  alias Macrina.{Exchange, Handler, Message}
+  alias Macrina.{Block1, Exchange, Handler, Message, Observe.ClientSession}
 
   defstruct ack_timeout: 2_000,
-            block1_max_body_size: :infinity,
-            block1_mode: :atomic,
-            block1_preferred_block_size: nil,
+            block1: %Block1{},
             endpoint: nil,
             exchange: %Exchange{},
             exchange_lifetime: 247_000,
@@ -24,9 +22,7 @@ defmodule Macrina.Connection do
 
   @type t :: %__MODULE__{
           ack_timeout: non_neg_integer(),
-          block1_max_body_size: non_neg_integer() | :infinity,
-          block1_mode: :atomic | :streaming,
-          block1_preferred_block_size: pos_integer() | nil,
+          block1: Block1.t(),
           endpoint: pid() | nil,
           exchange: Exchange.t(),
           exchange_lifetime: non_neg_integer(),
@@ -34,7 +30,7 @@ defmodule Macrina.Connection do
           ip: tuple(),
           max_retransmit: non_neg_integer(),
           name: String.t(),
-          observe_subscriptions: %{optional(binary()) => map()},
+          observe_subscriptions: ClientSession.t(),
           port: integer(),
           retry_timers: %{optional(binary()) => reference()},
           socket: port()
