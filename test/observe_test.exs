@@ -3,13 +3,13 @@ defmodule Macrina.ObserveTest do
 
   alias Macrina.{
     Client,
-    Endpoint,
     Message,
     Message.Opts.Block,
     Observe,
     Request,
     Response,
-    Server
+    Server,
+    Transport.UDP
   }
 
   defmodule ClientEndpointHandler do
@@ -68,15 +68,14 @@ defmodule Macrina.ObserveTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     assert {:ok, server} = Server.start_link(handler: ObserveHandler, port: 0)
-    {:ok, server_socket} = Endpoint.socket(server)
+    {:ok, server_socket} = UDP.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
 
     endpoint_name = {:global, {:observe_test_endpoint, make_ref()}}
 
-    {:ok, endpoint} =
-      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint} = UDP.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
 
-    {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
+    {:ok, endpoint_socket} = UDP.socket(endpoint_name)
 
     on_exit(fn ->
       stop_process(endpoint)
@@ -145,10 +144,9 @@ defmodule Macrina.ObserveTest do
 
     endpoint_name = {:global, {:observe_block2_endpoint, make_ref()}}
 
-    {:ok, endpoint} =
-      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint} = UDP.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
 
-    {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
+    {:ok, endpoint_socket} = UDP.socket(endpoint_name)
 
     on_exit(fn ->
       stop_process(server)

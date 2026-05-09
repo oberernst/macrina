@@ -222,14 +222,14 @@ Macrina.Response.location_path(response)   # => ["devices", "alpha"]
 ```text
 Macrina.Server / Macrina.Client
       │
-Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
+Macrina.Transport.UDP          ← UDP socket (GenServer over :gen_udp)
       │
-Macrina.Connection.Server ← per-peer GenServer (CON/NON/ACK/RST)
+Macrina.Peer.Session ← per-peer GenServer (CON/NON/ACK/RST)
       │
 Macrina.Handler           ← dispatches to raw modules or Routers
 ```
 
-Each incoming UDP peer spawns a `Macrina.Connection.Server` under a
+Each incoming UDP peer spawns a `Macrina.Peer.Session` under a
 `DynamicSupervisor`. Pure protocol state (tokens, message IDs, block transfers,
 retransmission tracking) lives in `Macrina.Exchange`. Connections idle-timeout
 after five minutes of inactivity.
@@ -240,7 +240,7 @@ Key internal modules:
 | --- | --- |
 | `Macrina.Message` | Binary CoAP codec (encode/decode) |
 | `Macrina.Exchange` | Pure exchange state machine |
-| `Macrina.Connection` | Per-peer state struct |
+| `Macrina.Peer.State` | Per-peer state struct |
 | `Macrina.Blockwise` | Block transfer assembly |
 | `Macrina.Observe` | Server-side observe registry |
 | `Macrina.Telemetry` | `:telemetry` event wrapper |

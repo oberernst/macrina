@@ -3,7 +3,7 @@ defmodule Macrina.Exchange do
 
   # Pure protocol state for a single peer exchange lifecycle. Owns the token,
   # message-id, caller, cached-reply, and blockwise tracking that sits behind
-  # `Macrina.Connection.Server`'s effectful shell.
+  # `Macrina.Peer.Session`'s effectful shell.
 
   alias Macrina.{Blockwise, Exchange.Dedup, Message, Message.Opts.Block, Telemetry}
 

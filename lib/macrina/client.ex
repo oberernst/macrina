@@ -4,7 +4,7 @@ defmodule Macrina.Client do
 
   Provides a connection-oriented client API for sending CoAP requests and
   managing Observe subscriptions. Each client struct wraps a
-  `Macrina.Connection.Server` process that handles retransmission, block
+  `Macrina.Peer.Session` process that handles retransmission, block
   transfers, and observe notifications for a single remote peer.
 
   ## Connecting
@@ -44,14 +44,14 @@ defmodule Macrina.Client do
 
   alias Macrina.{
     Blockwise,
-    Connection.Server,
-    Endpoint,
     Message,
     Message.Opts.Block,
     Observe.Subscription,
+    Peer.Session,
     Request,
     Response,
-    Telemetry
+    Telemetry,
+    Transport.UDP
   }
 
   defstruct [:conn, :ip, :port]
@@ -60,7 +60,7 @@ defmodule Macrina.Client do
   Connects to a remote CoAP peer.
 
   Accepts `:ip`, `:port`, and an optional `:endpoint` (defaults to
-  `Macrina.Endpoint`). Returns `{:ok, client}` or `{:error, reason}`.
+  `Macrina.Transport.UDP`). Returns `{:ok, client}` or `{:error, reason}`.
   """
   def connect(opts) when is_list(opts) do
     new(opts)
@@ -78,7 +78,7 @@ defmodule Macrina.Client do
   def new(opts) when is_list(opts) do
     with {:ok, ip} <- fetch_opt(opts, :ip),
          {:ok, port} <- fetch_opt(opts, :port) do
-      endpoint = Keyword.get(opts, :endpoint, Endpoint)
+      endpoint = Keyword.get(opts, :endpoint, UDP)
       build(ip, port, endpoint)
     end
   end
@@ -92,9 +92,9 @@ defmodule Macrina.Client do
   end
 
   @doc false
-  def build(ip, port, endpoint \\ Endpoint) do
-    with {:ok, socket} <- Endpoint.socket(endpoint),
-         {:ok, handler} <- Endpoint.handler(endpoint),
+  def build(ip, port, endpoint \\ UDP) do
+    with {:ok, socket} <- UDP.socket(endpoint),
+         {:ok, handler} <- UDP.handler(endpoint),
          {:ok, conn} <- start_connection(handler, ip, port, socket) do
       client = %__MODULE__{conn: conn, ip: ip, port: port}
       {:ok, client}
@@ -102,7 +102,7 @@ defmodule Macrina.Client do
   end
 
   @doc false
-  def build!(ip, port, endpoint \\ Endpoint) do
+  def build!(ip, port, endpoint \\ UDP) do
     case build(ip, port, endpoint) do
       {:ok, client} -> client
       {:error, reason} -> raise ArgumentError, "failed to build client: #{inspect(reason)}"
@@ -183,7 +183,7 @@ defmodule Macrina.Client do
 
     with {:ok, message} <- Request.to_message(cancel_request),
          {:ok, response_message} <- call_server(subscription.connection, message),
-         :ok <- Server.observe_unsubscribe(subscription.connection, subscription.token) do
+         :ok <- Session.observe_unsubscribe(subscription.connection, subscription.token) do
       {:ok, Response.from_message(response_message)}
     end
   end
@@ -246,7 +246,7 @@ defmodule Macrina.Client do
          response = Response.from_message(final_response_message),
          observe when is_integer(observe) and observe >= 0 <- Response.observe(response),
          subscription <- build_observe_subscription(pid, request, message, notify_to),
-         :ok <- Server.observe_subscribe(pid, subscription, observe) do
+         :ok <- Session.observe_subscribe(pid, subscription, observe) do
       {:ok, subscription, response}
     else
       nil -> {:error, :observe_not_supported}
@@ -357,14 +357,14 @@ defmodule Macrina.Client do
 
   defp call_server(pid, message) do
     if Process.alive?(pid) do
-      Server.call(pid, message)
+      Session.call(pid, message)
     else
       {:error, {:connection_unavailable, pid}}
     end
   end
 
   defp start_connection(handler, ip, port, socket) do
-    case Server.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
+    case Session.start_link(handler: handler, ip: ip, port: port, socket: socket, type: :client) do
       {:ok, conn} -> {:ok, conn}
       {:error, {:already_started, conn}} -> {:ok, conn}
       {:error, reason} -> {:error, reason}

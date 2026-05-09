@@ -1,8 +1,8 @@
-defmodule Macrina.Connection do
+defmodule Macrina.Peer.State do
   @moduledoc false
 
   # Per-peer connection state. Immutable struct plus pure getter/updater
-  # functions. The effectful shell lives in `Macrina.Connection.Server`.
+  # functions. The effectful shell lives in `Macrina.Peer.Session`.
 
   alias Macrina.{Block1, Exchange, Handler, Message, Observe.ClientSession}
 

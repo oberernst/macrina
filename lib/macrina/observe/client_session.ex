@@ -3,8 +3,8 @@ defmodule Macrina.Observe.ClientSession do
 
   # Pure client-side observe bookkeeping: the subscriptions this connection
   # initiated, their last-seen sequence number, and any in-flight Block2
-  # transfers. Lives as a field on `Macrina.Connection`; the effectful
-  # `Macrina.Connection.Server` drives it with socket I/O.
+  # transfers. Lives as a field on `Macrina.Peer.State`; the effectful
+  # `Macrina.Peer.Session` drives it with socket I/O.
 
   alias Macrina.Observe.Subscription
 

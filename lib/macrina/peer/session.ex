@@ -1,8 +1,8 @@
-defmodule Macrina.Connection.Server do
+defmodule Macrina.Peer.Session do
   @moduledoc false
 
   # Per-peer connection GenServer. One process per unique remote {ip, port},
-  # spawned by `Macrina.Endpoint` and supervised by `ConnectionSupervisor`.
+  # spawned by `Macrina.Transport.UDP` and supervised by `ConnectionSupervisor`.
   # Pure protocol state lives in `Macrina.Exchange`.
 
   use GenServer, restart: :transient
@@ -12,7 +12,6 @@ defmodule Macrina.Connection.Server do
     Block1.Chunk,
     Blockwise,
     Codes,
-    Connection,
     Exchange,
     Handler,
     Message,
@@ -20,12 +19,13 @@ defmodule Macrina.Connection.Server do
     Observe,
     Observe.ClientSession,
     Observe.Subscription,
+    Peer.State,
     Request,
     Response,
     Telemetry
   }
 
-  import Connection, only: :functions
+  import State, only: :functions
 
   @call_timeout :timer.seconds(10)
   @timeout :timer.minutes(5)
@@ -94,7 +94,7 @@ defmodule Macrina.Connection.Server do
     {:ok, state, @timeout}
   end
 
-  def handle_call({:request, %Message{} = message}, from, %Connection{} = state) do
+  def handle_call({:request, %Message{} = message}, from, %State{} = state) do
     case Message.encode(message) do
       {:ok, packet} ->
         :gen_udp.send(state.socket, {state.ip, state.port}, packet)
@@ -119,31 +119,31 @@ defmodule Macrina.Connection.Server do
   def handle_call(
         {:observe_subscribe, %Subscription{} = subscription, observe_value},
         _from,
-        %Connection{} = state
+        %State{} = state
       ) do
     next_state = put_observe_subscription(state, subscription, observe_value)
     {:reply, :ok, next_state, @timeout}
   end
 
-  def handle_call({:observe_unsubscribe, token}, _from, %Connection{} = state)
+  def handle_call({:observe_unsubscribe, token}, _from, %State{} = state)
       when is_binary(token) do
     next_state = drop_observe_subscription(state, token)
     {:reply, :ok, next_state, @timeout}
   end
 
-  def handle_cast({:observe_notify, notification, %Response{} = response}, %Connection{} = state) do
+  def handle_cast({:observe_notify, notification, %Response{} = response}, %State{} = state) do
     next_state = send_observe_notification(state, notification, response)
     {:noreply, next_state, @timeout}
   end
 
-  def handle_info({:coap, packet}, %Connection{} = state) do
+  def handle_info({:coap, packet}, %State{} = state) do
     decoded = Message.decode(packet)
     next_state = next_packet_state(decoded, state)
 
     {:noreply, next_state, @timeout}
   end
 
-  def handle_info({:retransmit, token}, %Connection{} = state) do
+  def handle_info({:retransmit, token}, %State{} = state) do
     {_timer_ref, state_without_timer} = pop_retry_timer(state, token)
     {action, next_state} = retry_request(state_without_timer, token)
 
@@ -161,7 +161,7 @@ defmodule Macrina.Connection.Server do
     execute_connection_event(state, [:stop], %{system_time: System.system_time()}, %{})
   end
 
-  defp reply_to_client(%Connection{} = state, message) do
+  defp reply_to_client(%State{} = state, message) do
     {caller, next_state} = pop_caller_for_token(state, message.token)
 
     unless is_nil(caller) do
@@ -172,7 +172,7 @@ defmodule Macrina.Connection.Server do
     next_state
   end
 
-  defp handle(%Connection{} = state, message) do
+  defp handle(%State{} = state, message) do
     case Handler.call(state.handler, state, message) do
       nil ->
         execute_connection_event(state, [:reply, :skipped], %{count: 1}, %{stage: :handler})
@@ -198,7 +198,7 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp handle(%Connection{} = state, message, :continue) do
+  defp handle(%State{} = state, message, :continue) do
     reply_opts = [code: :continue, options: block1_response_options(state, message), type: :ack]
 
     case send_built_reply(state, message, reply_opts, %{stage: :continue}) do
@@ -415,7 +415,7 @@ defmodule Macrina.Connection.Server do
          exchange_lifetime,
          max_retransmit
        ) do
-    %Connection{
+    %State{
       ack_timeout: ack_timeout,
       block1: block1,
       endpoint: endpoint,
@@ -431,13 +431,13 @@ defmodule Macrina.Connection.Server do
     }
   end
 
-  defp maybe_track_request(%Connection{} = state, %Message{type: :con} = message, from, packet) do
+  defp maybe_track_request(%State{} = state, %Message{type: :con} = message, from, packet) do
     state
     |> track_request(message, from, packet)
     |> schedule_retry_timer(message.token, 0)
   end
 
-  defp maybe_track_request(%Connection{} = state, _message, _from, _packet) do
+  defp maybe_track_request(%State{} = state, _message, _from, _packet) do
     state
   end
 
@@ -459,7 +459,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp schedule_retry_timer(
-         %Connection{ack_timeout: ack_timeout} = state,
+         %State{ack_timeout: ack_timeout} = state,
          token,
          retransmissions_sent
        ) do
@@ -467,17 +467,17 @@ defmodule Macrina.Connection.Server do
     schedule_request_timer(state, token, delay)
   end
 
-  defp schedule_response_timeout(%Connection{exchange_lifetime: exchange_lifetime} = state, token) do
+  defp schedule_response_timeout(%State{exchange_lifetime: exchange_lifetime} = state, token) do
     schedule_request_timer(state, token, exchange_lifetime)
   end
 
-  defp schedule_request_timer(%Connection{} = state, token, delay) do
+  defp schedule_request_timer(%State{} = state, token, delay) do
     timer_ref = Process.send_after(self(), {:retransmit, token}, delay)
 
     put_retry_timer(state, token, timer_ref)
   end
 
-  defp cancel_retry_timer(%Connection{} = state, token) do
+  defp cancel_retry_timer(%State{} = state, token) do
     case pop_retry_timer(state, token) do
       {nil, next_state} ->
         next_state
@@ -488,12 +488,12 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp complete_pending_request_state(%Connection{} = state, token) do
+  defp complete_pending_request_state(%State{} = state, token) do
     {_request, next_state} = complete_pending_request(state, token)
     next_state
   end
 
-  defp maybe_acknowledge_response(%Connection{} = state, %Message{type: :con, id: id}) do
+  defp maybe_acknowledge_response(%State{} = state, %Message{type: :con, id: id}) do
     case Message.build(:empty, id: id, type: :ack) do
       {:ok, ack} ->
         case encoded_reply(ack) do
@@ -517,7 +517,7 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp maybe_acknowledge_response(%Connection{} = state, _message) do
+  defp maybe_acknowledge_response(%State{} = state, _message) do
     state
   end
 
@@ -586,7 +586,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp maybe_continue_block1_transfer(
-         %Connection{block1: %Block1{mode: :streaming}} = state,
+         %State{block1: %Block1{mode: :streaming}} = state,
          message
        ) do
     if block1_transfer_too_large?(state, message) do
@@ -609,7 +609,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp maybe_complete_block1_transfer(
-         %Connection{block1: %Block1{mode: :streaming}} = state,
+         %State{block1: %Block1{mode: :streaming}} = state,
          message
        ) do
     if block1_transfer_too_large?(state, message) do
@@ -629,14 +629,14 @@ defmodule Macrina.Connection.Server do
   end
 
   defp block1_transfer_too_large?(
-         %Connection{block1: %Block1{max_body_size: :infinity}},
+         %State{block1: %Block1{max_body_size: :infinity}},
          _message
        ) do
     false
   end
 
   defp block1_transfer_too_large?(
-         %Connection{block1: %Block1{max_body_size: limit}} = state,
+         %State{block1: %Block1{max_body_size: limit}} = state,
          message
        )
        when is_integer(limit) and limit >= 0 do
@@ -736,7 +736,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp block1_response_block_size(
-         %Connection{block1: %Block1{preferred_block_size: preferred_block_size}},
+         %State{block1: %Block1{preferred_block_size: preferred_block_size}},
          %Block{size: request_block_size}
        )
        when is_integer(preferred_block_size) and preferred_block_size > 0 do
@@ -776,7 +776,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp send_reply(state, bin, metadata) do
-    Connection.reply(state, bin)
+    State.reply(state, bin)
 
     measurements = %{bytes: byte_size(bin)}
     execute_connection_event(state, [:reply, :sent], measurements, metadata)
@@ -793,11 +793,11 @@ defmodule Macrina.Connection.Server do
     %{ip: state.ip, peer: peer_name, port: state.port}
   end
 
-  defp prepare_observe_reply(%Connection{endpoint: nil} = state, _request, %Message{} = reply) do
+  defp prepare_observe_reply(%State{endpoint: nil} = state, _request, %Message{} = reply) do
     {state, reply}
   end
 
-  defp prepare_observe_reply(%Connection{} = state, %Message{} = request, %Message{} = reply) do
+  defp prepare_observe_reply(%State{} = state, %Message{} = request, %Message{} = reply) do
     case observe_request_action(request) do
       {:register, path} when reply.code == :content ->
         case Observe.register(state.endpoint, self(), path, request.token) do
@@ -831,7 +831,7 @@ defmodule Macrina.Connection.Server do
     end
   end
 
-  defp handle_observe_response(%Connection{} = state, %Message{} = message) do
+  defp handle_observe_response(%State{} = state, %Message{} = message) do
     case ClientSession.fetch(state.observe_subscriptions, message.token) do
       {:ok, subscription_entry} ->
         next_state =
@@ -847,7 +847,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle_client_observe_response(
-         %Connection{} = state,
+         %State{} = state,
          subscription_entry,
          %Message{} = message
        ) do
@@ -864,7 +864,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp maybe_collect_observe_block2(
-         %Connection{} = state,
+         %State{} = state,
          subscription_entry,
          %Message{descriptive_block: nil} = message
        ) do
@@ -874,7 +874,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp maybe_collect_observe_block2(
-         %Connection{} = state,
+         %State{} = state,
          %{subscription: %Subscription{request: request}} = subscription_entry,
          %Message{descriptive_block: %Block{more: more}} = message
        ) do
@@ -905,7 +905,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp finalize_observe_block2(
-         %Connection{} = state,
+         %State{} = state,
          %Subscription{} = subscription,
          message,
          transfers
@@ -924,7 +924,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp send_next_observe_block_request(
-         %Connection{} = state,
+         %State{} = state,
          %Subscription{} = subscription,
          message
        ) do
@@ -948,7 +948,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp deliver_observe_response(
-         %Connection{} = state,
+         %State{} = state,
          %Subscription{} = subscription,
          %Message{} = message
        ) do
@@ -957,7 +957,7 @@ defmodule Macrina.Connection.Server do
     state
   end
 
-  defp send_observe_notification(%Connection{} = state, notification, %Response{} = response) do
+  defp send_observe_notification(%State{} = state, notification, %Response{} = response) do
     notification_response =
       response
       |> normalize_notification_type()
@@ -998,37 +998,37 @@ defmodule Macrina.Connection.Server do
   end
 
   defp put_observe_subscription(
-         %Connection{observe_subscriptions: session} = state,
+         %State{observe_subscriptions: session} = state,
          %Subscription{} = subscription,
          observe_value
        ) do
-    %Connection{
+    %State{
       state
       | observe_subscriptions: ClientSession.put(session, subscription, observe_value)
     }
   end
 
-  defp put_observe_entry(%Connection{observe_subscriptions: session} = state, entry) do
-    %Connection{state | observe_subscriptions: Map.put(session, entry.token, entry)}
+  defp put_observe_entry(%State{observe_subscriptions: session} = state, entry) do
+    %State{state | observe_subscriptions: Map.put(session, entry.token, entry)}
   end
 
-  defp drop_observe_subscription(%Connection{observe_subscriptions: session} = state, token) do
-    %Connection{state | observe_subscriptions: ClientSession.drop(session, token)}
+  defp drop_observe_subscription(%State{observe_subscriptions: session} = state, token) do
+    %State{state | observe_subscriptions: ClientSession.drop(session, token)}
   end
 
   defp put_observe_transfers(
-         %Connection{observe_subscriptions: session} = state,
+         %State{observe_subscriptions: session} = state,
          token,
          transfers
        ) do
-    %Connection{
+    %State{
       state
       | observe_subscriptions: ClientSession.put_transfers(session, token, transfers)
     }
   end
 
-  defp clear_observe_transfers(%Connection{observe_subscriptions: session} = state, token) do
-    %Connection{state | observe_subscriptions: ClientSession.clear_transfers(session, token)}
+  defp clear_observe_transfers(%State{observe_subscriptions: session} = state, token) do
+    %State{state | observe_subscriptions: ClientSession.clear_transfers(session, token)}
   end
 
   defp normalize_notification_type(%Response{type: type} = response) when type in [:con, :non] do

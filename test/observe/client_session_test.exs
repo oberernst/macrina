@@ -2,7 +2,7 @@ defmodule Macrina.Observe.ClientSessionTest do
   use ExUnit.Case, async: true
 
   # Direct tests for the pure client-side observe bookkeeping extracted from
-  # `Macrina.Connection.Server`. A "session" is a `%{token => entry}` map
+  # `Macrina.Peer.Session`. A "session" is a `%{token => entry}` map
   # tracking the subscriptions this connection initiated. The effectful shell
   # owns socket I/O; this module owns nothing but the data.
 
@@ -96,7 +96,7 @@ defmodule Macrina.Observe.ClientSessionTest do
       assert {:ok, %{transfers: ^transfers}} = ClientSession.fetch(session, sub.token)
     end
 
-    test "is a no-op for unknown tokens (matches Connection.Server's silent miss)" do
+    test "is a no-op for unknown tokens (matches Peer.Session's silent miss)" do
       session = ClientSession.put_transfers(ClientSession.new(), <<0>>, %{a: 1})
 
       assert session == ClientSession.new()

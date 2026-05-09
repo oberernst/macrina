@@ -18,14 +18,14 @@ defmodule Macrina do
   ```
   Macrina.Server / Macrina.Client
         │
-  Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
+  Macrina.Transport.UDP          ← UDP socket (GenServer over :gen_udp)
         │
-  Macrina.Connection.Server ← per-peer GenServer (CON/NON/ACK/RST)
+  Macrina.Peer.Session ← per-peer GenServer (CON/NON/ACK/RST)
         │
   Macrina.Handler           ← dispatches to raw modules or Routers
   ```
 
-  Each incoming UDP peer spawns a `Connection.Server` under a
+  Each incoming UDP peer spawns a `Macrina.Peer.Session` under a
   `DynamicSupervisor`. Pure protocol state (tokens, message IDs, block
   transfers, retransmission tracking) lives in `Macrina.Exchange`.
   """

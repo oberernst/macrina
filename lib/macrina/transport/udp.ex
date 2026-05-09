@@ -1,12 +1,12 @@
-defmodule Macrina.Endpoint do
+defmodule Macrina.Transport.UDP do
   @moduledoc false
 
   # UDP socket manager. GenServer that opens a `:gen_udp` socket and spawns
-  # a `Macrina.Connection.Server` per remote peer. Not a public entry point —
+  # a `Macrina.Peer.Session` per remote peer. Not a public entry point —
   # use `Macrina.Server.start_link/1` instead.
 
   use GenServer
-  alias Macrina.{Block1, Connection.Server, ConnectionSupervisor, Router, Telemetry}
+  alias Macrina.{Block1, ConnectionSupervisor, Peer.Session, Router, Telemetry}
 
   @connection_option_keys [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
 
@@ -87,7 +87,7 @@ defmodule Macrina.Endpoint do
       [endpoint: self(), handler: state.handler, ip: ip, port: port, socket: socket]
       |> Keyword.merge(state.connection_opts)
 
-    init_args = {Server, child_args}
+    init_args = {Session, child_args}
 
     Telemetry.execute(
       [:endpoint, :packet, :received],

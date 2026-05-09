@@ -2,7 +2,7 @@ defmodule Macrina.Server do
   @moduledoc """
   Public entry point for starting a CoAP server.
 
-  Wraps `Macrina.Endpoint` with ergonomic options for handler/router selection,
+  Wraps `Macrina.Transport.UDP` with ergonomic options for handler/router selection,
   Block1 upload policy, and observer notifications.
 
   ## Starting a server
@@ -44,8 +44,9 @@ defmodule Macrina.Server do
   Returns `{:ok, count}` where `count` is the number of observers notified.
   """
 
-  alias Macrina.{Endpoint, Observe, Response}
-  alias Macrina.Connection.Server, as: ConnectionServer
+  alias Macrina.{Observe, Response}
+  alias Macrina.Peer.Session
+  alias Macrina.Transport.UDP
 
   @doc """
   Starts a CoAP server bound to the given UDP port.
@@ -54,7 +55,7 @@ defmodule Macrina.Server do
   """
   def start_link(opts) when is_list(opts) do
     with {:ok, endpoint_opts} <- build_endpoint_opts(opts) do
-      Endpoint.start_link(endpoint_opts)
+      UDP.start_link(endpoint_opts)
     end
   end
 
@@ -76,7 +77,7 @@ defmodule Macrina.Server do
     with {:ok, endpoint} <- resolve_endpoint(server),
          {:ok, notifications} <- Observe.notifications(endpoint, path) do
       Enum.each(notifications, fn notification ->
-        ConnectionServer.notify_observer(notification.connection, notification, response)
+        Session.notify_observer(notification.connection, notification, response)
       end)
 
       {:ok, length(notifications)}

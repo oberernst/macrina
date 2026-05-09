@@ -41,7 +41,7 @@ end
 port = String.to_integer(System.get_env("MACRINA_PORT") || "5683")
 
 {:ok, server} = Macrina.Server.start_link(router: Examples.ResourceRouter, port: port)
-{:ok, socket} = Macrina.Endpoint.socket(server)
+{:ok, socket} = Macrina.Transport.UDP.socket(server)
 {:ok, {_ip, bound_port}} = :inet.sockname(socket)
 
 IO.puts("Macrina resource router listening on coap://127.0.0.1:#{bound_port}")

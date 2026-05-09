@@ -1,7 +1,7 @@
 defmodule Macrina.ClientTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Client, Endpoint, Request, Response, Message, Message.Opts.Block}
+  alias Macrina.{Client, Message, Message.Opts.Block, Request, Response, Transport.UDP}
 
   defmodule TestHandler do
     def call(_connection, _message) do
@@ -18,8 +18,8 @@ defmodule Macrina.ClientTest do
     server = spawn_link(fn -> block2_server_loop(server_socket, payload, test_pid) end)
 
     endpoint_name = {:global, {:client_test_endpoint, make_ref()}}
-    {:ok, endpoint} = Endpoint.start_link(handler: TestHandler, port: 0, name: endpoint_name)
-    {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
+    {:ok, endpoint} = UDP.start_link(handler: TestHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint_socket} = UDP.socket(endpoint_name)
 
     on_exit(fn ->
       if Process.alive?(server) do
@@ -56,8 +56,8 @@ defmodule Macrina.ClientTest do
     server = spawn_link(fn -> block2_server_loop(server_socket, payload, test_pid) end)
 
     endpoint_name = {:global, {:client_test_endpoint, make_ref()}}
-    {:ok, endpoint} = Endpoint.start_link(handler: TestHandler, port: 0, name: endpoint_name)
-    {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
+    {:ok, endpoint} = UDP.start_link(handler: TestHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint_socket} = UDP.socket(endpoint_name)
 
     on_exit(fn ->
       if Process.alive?(server) do

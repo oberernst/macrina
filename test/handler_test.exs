@@ -3,11 +3,11 @@ defmodule Macrina.HandlerTest do
 
   alias Macrina.{
     Block1.Chunk,
-    Connection,
     Discovery.Resource,
     Handler,
     Message,
     Message.Opts.Block,
+    Peer.State,
     Request,
     Response
   }
@@ -66,7 +66,7 @@ defmodule Macrina.HandlerTest do
   end
 
   test "router handler falls back to an internal server error reply when response conversion fails" do
-    connection = %Connection{ip: {127, 0, 0, 1}, port: 5683}
+    connection = %State{ip: {127, 0, 0, 1}, port: 5683}
     request = Message.build!(:get, id: 12, token: <<1, 2, 3, 4>>, type: :con)
 
     reply = Handler.call({:router, InvalidRouter, %{}}, connection, request)
@@ -76,7 +76,7 @@ defmodule Macrina.HandlerTest do
   end
 
   test "module handlers receive block1 streaming chunks" do
-    connection = %Connection{}
+    connection = %State{}
     request = Message.build!(:put, id: 1, token: <<1>>, type: :con)
 
     chunk = %Chunk{
@@ -92,7 +92,7 @@ defmodule Macrina.HandlerTest do
   end
 
   test "router handlers receive block1 streaming chunks through the router callback" do
-    connection = %Connection{ip: {127, 0, 0, 1}, port: 5683}
+    connection = %State{ip: {127, 0, 0, 1}, port: 5683}
     request = Message.build!(:put, id: 13, token: <<1, 2, 3, 5>>, type: :con)
 
     chunk = %Chunk{
@@ -110,7 +110,7 @@ defmodule Macrina.HandlerTest do
   end
 
   test "router handlers serve discovery through the discover callback" do
-    connection = %Connection{ip: {127, 0, 0, 1}, port: 5683}
+    connection = %State{ip: {127, 0, 0, 1}, port: 5683}
 
     request =
       Message.build!(:get,

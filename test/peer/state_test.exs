@@ -1,7 +1,7 @@
-defmodule Macrina.ConnectionTest do
+defmodule Macrina.Peer.StateTest do
   use ExUnit.Case, async: true
 
-  alias Macrina.{Blockwise, Connection, Exchange, Message, Message.Opts.Block}
+  alias Macrina.{Blockwise, Exchange, Message, Message.Opts.Block, Peer.State}
 
   def telemetry_handler(event, measurements, metadata, pid) do
     send(pid, {event, measurements, metadata})
@@ -24,19 +24,19 @@ defmodule Macrina.ConnectionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    state = %Connection{exchange: %Exchange{}}
+    state = %State{exchange: %Exchange{}}
 
     message = %Message{
       descriptive_block: %Block{number: 0, more: false, size: 16},
       payload: "hello"
     }
 
-    assert {:ok, next_state} = Connection.store_block(state, message)
+    assert {:ok, next_state} = State.store_block(state, message)
 
     assert_receive {[:macrina, :connection, :block, :received],
                     %{block_number: 0, block_size: 16, bytes: 5}, %{more: false}}
 
-    assert Connection.read_blocks(next_state, message) == "hello"
+    assert State.read_blocks(next_state, message) == "hello"
 
     assert_receive {[:macrina, :connection, :block, :assembled], %{bytes: 5, count: 1},
                     %{first_block: 0, last_block: 0}}
@@ -76,38 +76,38 @@ defmodule Macrina.ConnectionTest do
       }
     }
 
-    state = %Connection{exchange: exchange}
+    state = %State{exchange: exchange}
 
-    assert Connection.read_blocks(state, message) == nil
+    assert State.read_blocks(state, message) == nil
 
     assert_receive {[:macrina, :connection, :block, :missing], %{count: 1},
                     %{missing_block: 1, received_blocks: 2}}
   end
 
   test "connection wraps exchange state helpers" do
-    state = %Connection{exchange: %Exchange{}}
+    state = %State{exchange: %Exchange{}}
     message = Message.build!(:get, id: 41, token: <<1, 2, 3, 4>>, type: :con)
     from = {self(), make_ref()}
 
     next_state =
       state
-      |> Connection.register_request(message, from)
-      |> Connection.cache_reply(message, "reply")
+      |> State.register_request(message, from)
+      |> State.cache_reply(message, "reply")
 
     assert next_state.exchange.callers == [{<<1, 2, 3, 4>>, from}]
     assert next_state.exchange.ids == [41]
     assert next_state.exchange.tokens == [<<1, 2, 3, 4>>]
-    assert Connection.cached_reply(next_state, message) == {:ok, "reply"}
+    assert State.cached_reply(next_state, message) == {:ok, "reply"}
 
-    {caller, claimed_state} = Connection.pop_caller_for_token(next_state, message.token)
+    {caller, claimed_state} = State.pop_caller_for_token(next_state, message.token)
 
     assert caller == {<<1, 2, 3, 4>>, from}
     assert claimed_state.exchange.callers == []
 
     cleared_state =
       claimed_state
-      |> Connection.complete_request(message)
-      |> Connection.reset_blocks()
+      |> State.complete_request(message)
+      |> State.reset_blocks()
 
     assert cleared_state.exchange.ids == []
     assert cleared_state.exchange.tokens == []
@@ -125,14 +125,14 @@ defmodule Macrina.ConnectionTest do
       %Exchange{}
       |> Exchange.cache_reply(message, "reply")
 
-    expired_state = %Connection{exchange: expired_exchange, exchange_lifetime: 0}
+    expired_state = %State{exchange: expired_exchange, exchange_lifetime: 0}
 
-    fresh_state = %Connection{
+    fresh_state = %State{
       exchange: fresh_exchange,
       exchange_lifetime: :math.pow(10, 12) |> trunc()
     }
 
-    assert Connection.cached_reply(expired_state, message) == :error
-    assert Connection.cached_reply(fresh_state, message) == {:ok, "reply"}
+    assert State.cached_reply(expired_state, message) == :error
+    assert State.cached_reply(fresh_state, message) == {:ok, "reply"}
   end
 end

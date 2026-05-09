@@ -1,7 +1,7 @@
-defmodule Macrina.ConnectionServerTest do
+defmodule Macrina.Peer.SessionTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Block1.Chunk, Connection.Server, Message, Message.Opts.Block}
+  alias Macrina.{Block1.Chunk, Message, Message.Opts.Block, Peer.Session}
 
   defmodule CountingHandler do
     def call(_connection, message) do
@@ -45,7 +45,7 @@ defmodule Macrina.ConnectionServerTest do
   end
 
   test "start_link returns a missing option error" do
-    assert {:error, {:missing_option, :handler}} = Server.start_link([])
+    assert {:error, {:missing_option, :handler}} = Session.start_link([])
   end
 
   test "start_link returns a running server when required options are present" do
@@ -63,10 +63,10 @@ defmodule Macrina.ConnectionServerTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {:ok, socket} = :gen_udp.open(0, [:binary, {:active, false}])
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                handler: TestHandler,
                ip: {127, 0, 0, 1},
                port: 5683,
@@ -102,10 +102,10 @@ defmodule Macrina.ConnectionServerTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {:ok, socket} = :gen_udp.open(0, [:binary, {:active, false}])
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                handler: TestHandler,
                ip: {127, 0, 0, 1},
                port: 5683,
@@ -116,7 +116,7 @@ defmodule Macrina.ConnectionServerTest do
     message = Message.build!(:get, id: 1, token: <<1, 2, 3, 4>>, type: :con)
     bad_message = %Message{message | token: <<1, 2, 3, 4, 5, 6, 7, 8, 9>>}
 
-    assert Server.call(pid, bad_message) == {:error, {:encode_failed, :invalid_token_length}}
+    assert Session.call(pid, bad_message) == {:error, {:encode_failed, :invalid_token_length}}
 
     assert_receive {[:macrina, :connection, :request, :encode, :error], %{count: 1},
                     %{error: :invalid_token_length, ip: {127, 0, 0, 1}, peer: _, port: 5683}}
@@ -151,10 +151,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
 
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                handler: CountingHandler,
                ip: {127, 0, 0, 1},
                port: recv_port,
@@ -212,10 +212,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                handler: NilCountingHandler,
                ip: {127, 0, 0, 1},
                port: recv_port,
@@ -252,10 +252,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                exchange_lifetime: 30,
                handler: CountingHandler,
                ip: {127, 0, 0, 1},
@@ -299,10 +299,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                ack_timeout: 20,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -313,7 +313,7 @@ defmodule Macrina.ConnectionServerTest do
              )
 
     request = Message.build!(:get, id: 401, token: <<4, 0, 1, 0>>, type: :con)
-    task = Task.async(fn -> Server.call(pid, request, 1_000) end)
+    task = Task.async(fn -> Session.call(pid, request, 1_000) end)
 
     assert {:ok, {_ip, _port, first_packet}} = :gen_udp.recv(recv_socket, 0, 200)
     assert {:ok, {_ip, _port, second_packet}} = :gen_udp.recv(recv_socket, 0, 200)
@@ -359,10 +359,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                ack_timeout: 100,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -373,7 +373,7 @@ defmodule Macrina.ConnectionServerTest do
              )
 
     request = Message.build!(:get, id: 402, token: <<4, 0, 2, 0>>, type: :con)
-    task = Task.async(fn -> Server.call(pid, request, 1_000) end)
+    task = Task.async(fn -> Session.call(pid, request, 1_000) end)
 
     assert {:ok, {_ip, _port, _first_packet}} = :gen_udp.recv(recv_socket, 0, 200)
 
@@ -407,10 +407,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                ack_timeout: 100,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -421,7 +421,7 @@ defmodule Macrina.ConnectionServerTest do
              )
 
     request = Message.build!(:get, id: 405, token: <<4, 0, 5, 0>>, type: :con)
-    task = Task.async(fn -> Server.call(pid, request, 1_000) end)
+    task = Task.async(fn -> Session.call(pid, request, 1_000) end)
 
     assert {:ok, {_ip, _port, _first_packet}} = :gen_udp.recv(recv_socket, 0, 200)
 
@@ -461,10 +461,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                ack_timeout: 100,
                exchange_lifetime: 50,
                handler: TestHandler,
@@ -476,7 +476,7 @@ defmodule Macrina.ConnectionServerTest do
              )
 
     request = Message.build!(:get, id: 404, token: <<4, 0, 4, 0>>, type: :con)
-    task = Task.async(fn -> Server.call(pid, request, 1_000) end)
+    task = Task.async(fn -> Session.call(pid, request, 1_000) end)
 
     assert {:ok, {_ip, _port, _first_packet}} = :gen_udp.recv(recv_socket, 0, 200)
 
@@ -506,10 +506,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                ack_timeout: 100,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -520,7 +520,7 @@ defmodule Macrina.ConnectionServerTest do
              )
 
     request = Message.build!(:get, id: 403, token: <<4, 0, 3, 0>>, type: :con)
-    task = Task.async(fn -> Server.call(pid, request, 1_000) end)
+    task = Task.async(fn -> Session.call(pid, request, 1_000) end)
 
     assert {:ok, {_ip, _port, _first_packet}} = :gen_udp.recv(recv_socket, 0, 200)
 
@@ -540,10 +540,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                block1_preferred_block_size: 32,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -582,10 +582,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                block1_max_body_size: 64,
                handler: TestHandler,
                ip: {127, 0, 0, 1},
@@ -638,10 +638,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                handler: TestHandler,
                ip: {127, 0, 0, 1},
                port: recv_port,
@@ -696,10 +696,10 @@ defmodule Macrina.ConnectionServerTest do
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, recv_socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, {_recv_ip, recv_port}} = :inet.sockname(recv_socket)
-    name = {:global, {Server, make_ref()}}
+    name = {:global, {Session, make_ref()}}
 
     assert {:ok, pid} =
-             Server.start_link(
+             Session.start_link(
                block1_mode: :streaming,
                handler: StreamingHandler,
                ip: {127, 0, 0, 1},

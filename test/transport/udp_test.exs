@@ -1,7 +1,7 @@
-defmodule Macrina.EndpointTest do
+defmodule Macrina.Transport.UDPTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Block1, Endpoint, Message, Message.Opts.Block}
+  alias Macrina.{Block1, Message, Message.Opts.Block, Transport.UDP}
 
   defmodule NilHandler do
     def call(_connection, _message) do
@@ -36,9 +36,9 @@ defmodule Macrina.EndpointTest do
   test "public endpoint propagates block1 policy" do
     policy = Block1.new!(preferred_block_size: 32)
 
-    assert {:ok, endpoint} = Endpoint.start_link(handler: NilHandler, port: 0, block1: policy)
+    assert {:ok, endpoint} = UDP.start_link(handler: NilHandler, port: 0, block1: policy)
 
-    {:ok, server_socket} = Endpoint.socket(endpoint)
+    {:ok, server_socket} = UDP.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -76,10 +76,9 @@ defmodule Macrina.EndpointTest do
 
     handler = {:router, StreamingRouter, %{}}
 
-    assert {:ok, endpoint} =
-             Endpoint.start_link(handler: handler, port: 0, block1: [mode: :streaming])
+    assert {:ok, endpoint} = UDP.start_link(handler: handler, port: 0, block1: [mode: :streaming])
 
-    {:ok, server_socket} = Endpoint.socket(endpoint)
+    {:ok, server_socket} = UDP.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -131,6 +130,6 @@ defmodule Macrina.EndpointTest do
     router_handler = {:router, __MODULE__.NilHandler, %{}}
 
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
-             Endpoint.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
+             UDP.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
   end
 end

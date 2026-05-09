@@ -6,9 +6,9 @@ defmodule Macrina.Handler do
   # callback contract.
   alias Macrina.{
     Block1.Chunk,
-    Connection,
     Discovery,
     Message,
+    Peer.State,
     Request,
     Response,
     Router,
@@ -17,18 +17,18 @@ defmodule Macrina.Handler do
 
   @type t :: module() | {:router, module(), map()}
 
-  def call(handler, %Connection{} = connection, %Message{} = message) do
+  def call(handler, %State{} = connection, %Message{} = message) do
     case handler do
       {:router, router, context} -> call_router(router, context, connection, message)
       module when is_atom(module) -> module.call(connection, message)
     end
   end
 
-  def call({:router, router, context}, %Connection{} = connection, %Chunk{} = chunk) do
+  def call({:router, router, context}, %State{} = connection, %Chunk{} = chunk) do
     call_router_block1(router, context, connection, chunk)
   end
 
-  def call(module, %Connection{} = connection, %Chunk{} = chunk) when is_atom(module) do
+  def call(module, %State{} = connection, %Chunk{} = chunk) when is_atom(module) do
     module.call(connection, chunk)
   end
 
