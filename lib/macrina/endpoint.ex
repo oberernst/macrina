@@ -81,7 +81,7 @@ defmodule Macrina.Endpoint do
   end
 
   def handle_info({:udp, socket, ip, port, packet}, state) do
-    conn_name = Macrina.conn_name(ip, port)
+    conn_name = Macrina.Peer.label(ip, port)
 
     child_args =
       [endpoint: self(), handler: state.handler, ip: ip, port: port, socket: socket]

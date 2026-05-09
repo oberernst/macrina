@@ -29,26 +29,4 @@ defmodule Macrina do
   `DynamicSupervisor`. Pure protocol state (tokens, message IDs, block
   transfers, retransmission tracking) lives in `Macrina.Exchange`.
   """
-
-  @doc """
-  Returns a human-readable name for a peer address.
-
-  ## Examples
-
-      iex> Macrina.conn_name({127, 0, 0, 1}, 5683)
-      "127.0.0.1/5683"
-
-      iex> Macrina.conn_name({0, 0, 0, 0, 0, 0, 0, 1}, 5683)
-      "0:0:0:0:0:0:0:1/5683"
-
-  """
-  def conn_name({_, _, _, _} = ip, port) do
-    ip_string = ip |> Tuple.to_list() |> Enum.join(".")
-    "#{ip_string}/#{port}"
-  end
-
-  def conn_name({_, _, _, _, _, _, _, _} = ip, port) do
-    ip_string = ip |> Tuple.to_list() |> Enum.join(":")
-    "#{ip_string}/#{port}"
-  end
 end

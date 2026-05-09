@@ -401,7 +401,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp connection_name(args, ip, port) do
-    Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
+    Keyword.get(args, :name, {:global, {__MODULE__, Macrina.Peer.label(ip, port)}})
   end
 
   defp connection_state(
@@ -788,7 +788,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp connection_metadata(state) do
-    peer_name = Macrina.conn_name(state.ip, state.port)
+    peer_name = Macrina.Peer.label(state.ip, state.port)
 
     %{ip: state.ip, peer: peer_name, port: state.port}
   end

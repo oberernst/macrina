@@ -8,6 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `Macrina.conn_name/2` is now `Macrina.Peer.label/2`. `Macrina.Peer` is the
+  new internal home for peer-identity helpers; the old function has been
+  removed without a deprecation shim (no public-API guarantees pre-1.0).
 - Marked implementation modules as internal (`@moduledoc false`) to sharpen the
   documented public surface: `Macrina.Application`, `Macrina.Connection`,
   `Macrina.Connection.Server`, `Macrina.Endpoint`, `Macrina.Exchange`,
