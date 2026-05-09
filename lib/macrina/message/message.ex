@@ -379,8 +379,12 @@ defmodule Macrina.Message do
   defp validate_id(_id), do: {:error, :invalid_id}
 
   defp validate_options(options) when is_list(options) do
-    case Binary.encode(options) do
-      {:ok, _encoded_options} -> :ok
+    # Walks the options once for shape+name+value validation but does not
+    # produce the encoded binary — `Macrina.Message.encode/1` is responsible
+    # for the actual byte serialisation. Halves the work `build/2` does on
+    # every well-formed input.
+    case Binary.validate(options) do
+      :ok -> :ok
       {:error, reason} -> {:error, {:invalid_options, reason}}
     end
   end

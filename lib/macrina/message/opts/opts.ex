@@ -2,6 +2,11 @@ defmodule Macrina.Message.Opts do
   @moduledoc false
 
   # CoAP option number/name registry (RFC 7252 §5.10).
+  #
+  # Wave C swapped the original `Enum.find/2` linear scan for compile-time
+  # maps. Lookups are now O(log n) on map size and the option list is closed:
+  # callers cannot register new options at runtime (none ever did).
+
   @opts [
     {1, "If-Match"},
     {3, "Uri-Host"},
@@ -24,25 +29,29 @@ defmodule Macrina.Message.Opts do
     {60, "Size1"}
   ]
 
+  @number_to_name Map.new(@opts)
+  @name_to_number Map.new(@opts, fn {number, name} -> {name, number} end)
+
+  @spec name(integer()) :: String.t() | nil
+  def name(number) when is_integer(number) do
+    Map.get(@number_to_name, number)
+  end
+
+  @spec number(String.t()) :: integer() | nil
+  def number(name) when is_binary(name) do
+    Map.get(@name_to_number, name)
+  end
+
+  @spec atom_name(integer()) :: atom() | nil
   def atom_name(number) do
-    number |> name() |> to_atom()
-  end
-
-  def name(number) do
-    case Enum.find(@opts, fn {n, _} -> n == number end) do
-      {_, name} -> name
+    case name(number) do
       nil -> nil
+      string -> to_atom(string)
     end
   end
 
-  def number(name) do
-    case Enum.find(@opts, fn {_, n} -> n == name end) do
-      {number, _} -> number
-      nil -> nil
-    end
-  end
-
-  def to_atom(name) do
+  @spec to_atom(String.t()) :: atom()
+  def to_atom(name) when is_binary(name) do
     name |> String.downcase() |> String.replace("-", "_") |> String.to_atom()
   end
 end

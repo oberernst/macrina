@@ -4,6 +4,8 @@ defmodule Macrina.Message.Opts.Binary do
   # Binary codec for CoAP options (RFC 7252 §3.1). Handles delta/length
   # extension bytes, block option packing, and payload-marker detection.
 
+  import Bitwise, only: [bsl: 2]
+
   alias Macrina.Message.{Opts, Opts.Block}
 
   @type option_value :: binary() | integer() | Block.t()
@@ -80,7 +82,11 @@ defmodule Macrina.Message.Opts.Binary do
 
   @spec decode_block(integer(), integer(), integer()) :: Block.t()
   def decode_block(num, m, szx) do
-    %Block{number: num, more: m == 1, size: :math.pow(2, szx + 4) |> Float.ceil() |> trunc()}
+    # CoAP block size encoding (RFC 7959 §2.2): size = 2^(szx + 4).
+    # `bsl(1, szx + 4)` is exact integer arithmetic — the prior
+    # `:math.pow |> Float.ceil |> trunc` round-trip was both slower and only
+    # accidentally correct for the integer cases the protocol allows.
+    %Block{number: num, more: m == 1, size: bsl(1, szx + 4)}
   end
 
   @spec decode_length(integer(), binary()) ::
@@ -155,6 +161,27 @@ defmodule Macrina.Message.Opts.Binary do
     {:error, :invalid_options}
   end
 
+  @doc """
+  Validates an option list using the same shape, name, and value checks as
+  `encode/1`, but stops short of allocating the encoded options binary.
+
+  Cheaper than `encode/1` when the caller only needs to know whether the
+  options are well-formed — `Macrina.Message.build/2` uses it as a build-time
+  guard so it doesn't have to run the full encode pass twice (once at build,
+  once at message encode time).
+  """
+  @spec validate([option()]) :: :ok | {:error, encode_error()}
+  def validate(options) when is_list(options) do
+    case encode_values(options) do
+      {:ok, _encoded_options} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def validate(_options) do
+    {:error, :invalid_options}
+  end
+
   def encode({number, value}, {sum, existing}) do
     initial_delta = number - sum
     initial_length = byte_size(value)
@@ -180,7 +207,7 @@ defmodule Macrina.Message.Opts.Binary do
         0
       end
 
-    szx = (size |> :math.log2() |> Float.ceil() |> trunc()) - 4
+    szx = szx_for_size(size)
 
     cond do
       num < 16 -> <<num::4, m::1, szx::3>>
@@ -188,6 +215,18 @@ defmodule Macrina.Message.Opts.Binary do
       true -> <<num::28, m::1, szx::3>>
     end
   end
+
+  # CoAP block-size encoding (RFC 7959 §2.2). Only sizes 16..1024 are legal;
+  # szx 7 (size 2048) is reserved. A 7-clause function gives us O(1) dispatch
+  # via the BEAM's pattern-match jump table without a runtime map lookup.
+  @spec szx_for_size(pos_integer()) :: 0..6
+  defp szx_for_size(16), do: 0
+  defp szx_for_size(32), do: 1
+  defp szx_for_size(64), do: 2
+  defp szx_for_size(128), do: 3
+  defp szx_for_size(256), do: 4
+  defp szx_for_size(512), do: 5
+  defp szx_for_size(1024), do: 6
 
   def encode_value({name, value}) when is_binary(name) do
     with {:ok, number} <- encode_option_number(name),

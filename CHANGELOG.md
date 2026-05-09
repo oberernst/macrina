@@ -8,6 +8,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Codec hot-path optimisations. `Macrina.Message.Opts.name/1` and
+  `Macrina.Message.Opts.number/1` now use compile-time maps instead of an
+  `Enum.find/2` linear scan over a 19-tuple list.
+  `Macrina.Message.Opts.Binary.decode_block/3` uses `Bitwise.bsl/2` instead
+  of `:math.pow |> Float.ceil |> trunc`, and `encode_block/3` uses an
+  exhaustive 7-clause `szx_for_size/1` lookup instead of `:math.log2 |>
+  Float.ceil |> trunc`. All exact integer arithmetic; no floating-point.
+- `Macrina.Message.build/2` no longer encodes options twice. Added a new
+  `Macrina.Message.Opts.Binary.validate/1` that runs the same shape, name,
+  and value checks as `encode/1` but stops short of allocating the encoded
+  binary. `validate_options` now uses it; the actual byte serialisation only
+  happens once, at `Macrina.Message.encode/1` time.
 - `Macrina.conn_name/2` is now `Macrina.Peer.label/2`. `Macrina.Peer` is the
   new internal home for peer-identity helpers; the old function has been
   removed without a deprecation shim (no public-API guarantees pre-1.0).
