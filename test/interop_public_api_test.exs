@@ -1,7 +1,7 @@
 defmodule Macrina.InteropPublicApiTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Client, Request, Response, Router, Server, Transport.UDP}
+  alias Macrina.{Client, Endpoint, Request, Response, Router, Server}
 
   defmodule ClientEndpointHandler do
     def call(_connection, _message) do
@@ -36,12 +36,13 @@ defmodule Macrina.InteropPublicApiTest do
 
   defp start_server_and_client do
     {:ok, server} = Server.start_link(router: DemoRouter, port: 0)
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
 
     endpoint_name = {:global, {:interop_client_endpoint, make_ref()}}
 
-    {:ok, endpoint} = UDP.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint} =
+      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
 
     {:ok, client} = Client.connect(ip: {127, 0, 0, 1}, port: server_port, endpoint: endpoint_name)
 

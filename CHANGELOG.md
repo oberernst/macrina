@@ -8,9 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Per-endpoint atomic message-id counter. `Macrina.Transport.UDP` now owns
+- Per-endpoint atomic message-id counter. `Macrina.Endpoint` now owns
   an `:atomics` ref seeded at endpoint start; `Macrina.Peer.Session` reads it
-  via `Macrina.Transport.UDP.next_message_id/1` (a pure ref-based helper —
+  via `Macrina.Endpoint.next_message_id/1` (a pure ref-based helper —
   no GenServer round-trip per message). Sessions spawned outside a UDP
   endpoint (tests, ad-hoc setups) get a fresh per-session counter as
   fallback. Observer notifications and observe block2 follow-up requests
@@ -33,14 +33,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removed without a deprecation shim (no public-API guarantees pre-1.0).
 - Marked implementation modules as internal (`@moduledoc false`) to sharpen the
   documented public surface: `Macrina.Application`, `Macrina.Peer.State`,
-  `Macrina.Peer.Session`, `Macrina.Transport.UDP`, `Macrina.Exchange`,
+  `Macrina.Peer.Session`, `Macrina.Endpoint`, `Macrina.Exchange`,
   `Macrina.Handler`, `Macrina.Blockwise`, `Macrina.Codes`, `Macrina.Types`,
   `Macrina.ContentFormat`, `Macrina.Message.Opts`, `Macrina.Message.Opts.Binary`.
 - Replaced the raising `Macrina.Types.parse/1` shim with a non-raising
   `Macrina.Types.decode/1` call inside the message decoder. The unused
   `Macrina.Codes.parse/1,2` helpers were removed.
 - `Macrina.Server.start_link/1` no longer re-normalises the `:block1` option;
-  `Macrina.Transport.UDP` is the single site that expands a `Macrina.Block1` policy
+  `Macrina.Endpoint` is the single site that expands a `Macrina.Block1` policy
   into raw connection options. Behaviour is unchanged.
 - `Macrina.Peer.State` now stores the Block1 policy as a single
   `:block1` field (a `%Macrina.Block1{}` struct) rather than three sibling

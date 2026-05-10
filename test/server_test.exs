@@ -4,14 +4,14 @@ defmodule Macrina.ServerTest do
   alias Macrina.{
     Block1,
     Client,
+    Endpoint,
     Message,
     Message.Opts.Block,
     Request,
     Resource,
     Response,
     Router,
-    Server,
-    Transport.UDP
+    Server
   }
 
   defmodule NilHandler do
@@ -108,7 +108,7 @@ defmodule Macrina.ServerTest do
 
     assert {:ok, server} = Server.start_link(handler: NilHandler, port: 0, block1: policy)
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -141,7 +141,7 @@ defmodule Macrina.ServerTest do
     assert {:ok, server} =
              Server.start_link(handler: NilHandler, port: 0, block1: [max_body_size: 64])
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -206,7 +206,7 @@ defmodule Macrina.ServerTest do
     assert {:ok, server} =
              Server.start_link(router: StreamingRouter, port: 0, block1: [mode: :streaming])
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -262,12 +262,12 @@ defmodule Macrina.ServerTest do
   test "public server serves multiple router resources and discovery" do
     assert {:ok, server} = Server.start_link(router: DiscoveryRouter, port: 0)
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             UDP.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)
@@ -315,12 +315,12 @@ defmodule Macrina.ServerTest do
   test "public server returns not acceptable for discovery requests with another accept format" do
     assert {:ok, server} = Server.start_link(router: DiscoveryRouter, port: 0)
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             UDP.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)
@@ -340,12 +340,12 @@ defmodule Macrina.ServerTest do
   test "public server returns not acceptable when a routed resource cannot satisfy accept" do
     assert {:ok, server} = Server.start_link(router: DiscoveryRouter, port: 0)
 
-    {:ok, server_socket} = UDP.socket(server)
+    {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             UDP.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)

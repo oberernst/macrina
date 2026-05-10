@@ -3,7 +3,7 @@ defmodule Macrina do
   Root module for the Macrina CoAP library.
 
   Macrina is an Elixir implementation of the Constrained Application Protocol
-  (CoAP, RFC 7252) for machine-to-machine communication over UDP. It provides
+  (CoAP, RFC 7252) for machine-to-machine communication over Endpoint. It provides
   a client, server, and codec layer with support for:
 
     * Confirmable and non-confirmable messages with automatic retransmission
@@ -18,14 +18,14 @@ defmodule Macrina do
   ```
   Macrina.Server / Macrina.Client
         │
-  Macrina.Transport.UDP          ← UDP socket (GenServer over :gen_udp)
+  Macrina.Endpoint          ← Endpoint socket (GenServer over :gen_udp)
         │
   Macrina.Peer.Session ← per-peer GenServer (CON/NON/ACK/RST)
         │
   Macrina.Handler           ← dispatches to raw modules or Routers
   ```
 
-  Each incoming UDP peer spawns a `Macrina.Peer.Session` under a
+  Each incoming Endpoint peer spawns a `Macrina.Peer.Session` under a
   `DynamicSupervisor`. Pure protocol state (tokens, message IDs, block
   transfers, retransmission tracking) lives in `Macrina.Exchange`.
   """

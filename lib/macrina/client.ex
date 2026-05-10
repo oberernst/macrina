@@ -44,14 +44,14 @@ defmodule Macrina.Client do
 
   alias Macrina.{
     Blockwise,
+    Endpoint,
     Message,
     Message.Opts.Block,
     Observe.Subscription,
     Peer.Session,
     Request,
     Response,
-    Telemetry,
-    Transport.UDP
+    Telemetry
   }
 
   defstruct [:conn, :ip, :port]
@@ -60,7 +60,7 @@ defmodule Macrina.Client do
   Connects to a remote CoAP peer.
 
   Accepts `:ip`, `:port`, and an optional `:endpoint` (defaults to
-  `Macrina.Transport.UDP`). Returns `{:ok, client}` or `{:error, reason}`.
+  `Macrina.Endpoint`). Returns `{:ok, client}` or `{:error, reason}`.
   """
   def connect(opts) when is_list(opts) do
     new(opts)
@@ -78,7 +78,7 @@ defmodule Macrina.Client do
   def new(opts) when is_list(opts) do
     with {:ok, ip} <- fetch_opt(opts, :ip),
          {:ok, port} <- fetch_opt(opts, :port) do
-      endpoint = Keyword.get(opts, :endpoint, UDP)
+      endpoint = Keyword.get(opts, :endpoint, Endpoint)
       build(ip, port, endpoint)
     end
   end
@@ -92,10 +92,10 @@ defmodule Macrina.Client do
   end
 
   @doc false
-  def build(ip, port, endpoint \\ UDP) do
-    with {:ok, socket} <- UDP.socket(endpoint),
-         {:ok, handler} <- UDP.handler(endpoint),
-         {:ok, counter} <- UDP.message_id_counter(endpoint),
+  def build(ip, port, endpoint \\ Endpoint) do
+    with {:ok, socket} <- Endpoint.socket(endpoint),
+         {:ok, handler} <- Endpoint.handler(endpoint),
+         {:ok, counter} <- Endpoint.message_id_counter(endpoint),
          {:ok, conn} <- start_connection(handler, ip, port, socket, counter) do
       client = %__MODULE__{conn: conn, ip: ip, port: port}
       {:ok, client}
@@ -103,7 +103,7 @@ defmodule Macrina.Client do
   end
 
   @doc false
-  def build!(ip, port, endpoint \\ UDP) do
+  def build!(ip, port, endpoint \\ Endpoint) do
     case build(ip, port, endpoint) do
       {:ok, client} -> client
       {:error, reason} -> raise ArgumentError, "failed to build client: #{inspect(reason)}"

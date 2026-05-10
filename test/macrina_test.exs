@@ -1,5 +1,5 @@
 defmodule MacrinaTest do
   use ExUnit.Case
-  doctest Macrina.Transport.UDP
+  doctest Macrina.Endpoint
   doctest Macrina.Message
 end

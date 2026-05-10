@@ -1,7 +1,7 @@
-defmodule Macrina.Transport.UDP do
+defmodule Macrina.Endpoint do
   @moduledoc false
 
-  # UDP socket manager. GenServer that opens a `:gen_udp` socket and spawns
+  # Endpoint socket manager. GenServer that opens a `:gen_udp` socket and spawns
   # a `Macrina.Peer.Session` per remote peer. Not a public entry point —
   # use `Macrina.Server.start_link/1` instead.
 

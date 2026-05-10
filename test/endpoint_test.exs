@@ -1,7 +1,7 @@
-defmodule Macrina.Transport.UDPTest do
+defmodule Macrina.EndpointTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Block1, Message, Message.Opts.Block, Transport.UDP}
+  alias Macrina.{Block1, Endpoint, Message, Message.Opts.Block}
 
   defmodule NilHandler do
     def call(_connection, _message) do
@@ -36,9 +36,9 @@ defmodule Macrina.Transport.UDPTest do
   test "public endpoint propagates block1 policy" do
     policy = Block1.new!(preferred_block_size: 32)
 
-    assert {:ok, endpoint} = UDP.start_link(handler: NilHandler, port: 0, block1: policy)
+    assert {:ok, endpoint} = Endpoint.start_link(handler: NilHandler, port: 0, block1: policy)
 
-    {:ok, server_socket} = UDP.socket(endpoint)
+    {:ok, server_socket} = Endpoint.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -76,9 +76,10 @@ defmodule Macrina.Transport.UDPTest do
 
     handler = {:router, StreamingRouter, %{}}
 
-    assert {:ok, endpoint} = UDP.start_link(handler: handler, port: 0, block1: [mode: :streaming])
+    assert {:ok, endpoint} =
+             Endpoint.start_link(handler: handler, port: 0, block1: [mode: :streaming])
 
-    {:ok, server_socket} = UDP.socket(endpoint)
+    {:ok, server_socket} = Endpoint.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
     {:ok, client_socket} = :gen_udp.open(0, [:binary, {:active, false}])
 
@@ -130,19 +131,19 @@ defmodule Macrina.Transport.UDPTest do
     router_handler = {:router, __MODULE__.NilHandler, %{}}
 
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
-             UDP.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
+             Endpoint.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
   end
 
   describe "next_message_id/1" do
     # Wave C replaced `Enum.random(10000..19999)` per-message with a
-    # per-endpoint atomic counter. The ref lives on `Macrina.Transport.UDP`
+    # per-endpoint atomic counter. The ref lives on `Macrina.Endpoint`
     # state; this test pins down the wrap and monotonic-modulo-65536
     # behaviour without standing up a real socket.
 
     test "returns sequential ids modulo 65_536 for a fresh counter" do
       ref = :atomics.new(1, signed: false)
 
-      ids = for _ <- 1..5, do: UDP.next_message_id(ref)
+      ids = for _ <- 1..5, do: Endpoint.next_message_id(ref)
 
       # Five sequential calls produce five consecutive values; with a fresh
       # counter that's [1, 2, 3, 4, 5].
@@ -153,16 +154,16 @@ defmodule Macrina.Transport.UDPTest do
       ref = :atomics.new(1, signed: false)
       :atomics.put(ref, 1, 65_534)
 
-      assert UDP.next_message_id(ref) == 65_535
-      assert UDP.next_message_id(ref) == 0
-      assert UDP.next_message_id(ref) == 1
+      assert Endpoint.next_message_id(ref) == 65_535
+      assert Endpoint.next_message_id(ref) == 0
+      assert Endpoint.next_message_id(ref) == 1
     end
 
     test "stays within the 16-bit range no matter what the underlying counter holds" do
       ref = :atomics.new(1, signed: false)
       :atomics.put(ref, 1, 1_000_000)
 
-      id = UDP.next_message_id(ref)
+      id = Endpoint.next_message_id(ref)
 
       assert id >= 0 and id <= 65_535
     end

@@ -222,7 +222,7 @@ Macrina.Response.location_path(response)   # => ["devices", "alpha"]
 ```text
 Macrina.Server / Macrina.Client
       │
-Macrina.Transport.UDP          ← UDP socket (GenServer over :gen_udp)
+Macrina.Endpoint          ← UDP socket (GenServer over :gen_udp)
       │
 Macrina.Peer.Session ← per-peer GenServer (CON/NON/ACK/RST)
       │

@@ -2,7 +2,7 @@ defmodule Macrina.Peer.Session do
   @moduledoc false
 
   # Per-peer connection GenServer. One process per unique remote {ip, port},
-  # spawned by `Macrina.Transport.UDP` and supervised by `ConnectionSupervisor`.
+  # spawned by `Macrina.Endpoint` and supervised by `ConnectionSupervisor`.
   # Pure protocol state lives in `Macrina.Exchange`.
 
   use GenServer, restart: :transient
@@ -12,6 +12,7 @@ defmodule Macrina.Peer.Session do
     Block1.Chunk,
     Blockwise,
     Codes,
+    Endpoint,
     Exchange,
     Handler,
     Message,
@@ -22,8 +23,7 @@ defmodule Macrina.Peer.Session do
     Peer.State,
     Request,
     Response,
-    Telemetry,
-    Transport.UDP
+    Telemetry
   }
 
   import State, only: :functions
@@ -67,7 +67,7 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  # Per-endpoint atomic counter (Wave C). When spawned by `Macrina.Transport.UDP`
+  # Per-endpoint atomic counter (Wave C). When spawned by `Macrina.Endpoint`
   # we get the endpoint's shared counter; when spawned directly (tests, ad-hoc
   # client setups), fall back to a fresh per-session counter so the session
   # always has a stamping-source.
@@ -81,7 +81,7 @@ defmodule Macrina.Peer.Session do
   # block2 follow-ups, server-side observer notifications) — anywhere we
   # would otherwise inherit `Macrina.Message.build/2`'s random fallback.
   defp stamp_message_id(%State{message_id_counter: ref}, %Message{} = message) do
-    %Message{message | id: UDP.next_message_id(ref)}
+    %Message{message | id: Endpoint.next_message_id(ref)}
   end
 
   defp build_block1_policy(args) do
