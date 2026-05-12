@@ -14,10 +14,11 @@ defmodule Macrina.ServerTest do
     Server
   }
 
-  defmodule NilHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule NilRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
   defmodule StreamingRouter do
@@ -106,7 +107,7 @@ defmodule Macrina.ServerTest do
   test "public server propagates block1 preferred block size" do
     policy = Block1.new!(preferred_block_size: 32)
 
-    assert {:ok, server} = Server.start_link(handler: NilHandler, port: 0, block1: policy)
+    assert {:ok, server} = Server.start_link(router: NilRouter, port: 0, block1: policy)
 
     {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
@@ -139,7 +140,7 @@ defmodule Macrina.ServerTest do
 
   test "public server propagates block1 upload limits" do
     assert {:ok, server} =
-             Server.start_link(handler: NilHandler, port: 0, block1: [max_body_size: 64])
+             Server.start_link(router: NilRouter, port: 0, block1: [max_body_size: 64])
 
     {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
@@ -189,7 +190,7 @@ defmodule Macrina.ServerTest do
   test "public server rejects ambiguous block1 options" do
     assert {:error, {:invalid_block1, :conflicting_options}} =
              Server.start_link(
-               handler: NilHandler,
+               router: NilRouter,
                port: 0,
                block1: [max_body_size: 64],
                block1_max_body_size: 64
@@ -256,7 +257,7 @@ defmodule Macrina.ServerTest do
 
   test "public server rejects streaming block1 mode for routers without a callback" do
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
-             Server.start_link(router: NilHandler, port: 0, block1: [mode: :streaming])
+             Server.start_link(router: NilRouter, port: 0, block1: [mode: :streaming])
   end
 
   test "public server serves multiple router resources and discovery" do
@@ -267,7 +268,7 @@ defmodule Macrina.ServerTest do
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(router: NilRouter, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)
@@ -320,7 +321,7 @@ defmodule Macrina.ServerTest do
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(router: NilRouter, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)
@@ -345,7 +346,7 @@ defmodule Macrina.ServerTest do
     client_endpoint_name = {:global, {:server_test_client_endpoint, make_ref()}}
 
     assert {:ok, client_endpoint} =
-             Endpoint.start_link(handler: NilHandler, port: 0, name: client_endpoint_name)
+             Endpoint.start_link(router: NilRouter, port: 0, name: client_endpoint_name)
 
     on_exit(fn ->
       stop_process(client_endpoint)

@@ -3,10 +3,11 @@ defmodule Macrina.InteropPublicApiTest do
 
   alias Macrina.{Client, Endpoint, Request, Response, Router, Server}
 
-  defmodule ClientEndpointHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule ClientEndpointRouter do
+    @behaviour Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
   defmodule DemoRouter do

@@ -1,9 +1,12 @@
 defmodule Macrina.Handler do
   @moduledoc false
 
-  # Internal dispatch bridge. Routes decoded messages to a raw handler module
-  # or a `Macrina.Router` implementation. `Macrina.Router` is the only public
-  # callback contract.
+  # Internal router dispatch. The session holds a `{router_module, context}`
+  # tuple and calls `Macrina.Handler.call/3` to route each decoded message or
+  # Block1 chunk through the user's `Macrina.Router` implementation. Discovery
+  # responses (`/.well-known/core`) and router error replies are produced
+  # here too so `Macrina.Peer.Session` doesn't need to know about routing.
+
   alias Macrina.{
     Block1.Chunk,
     Discovery,
@@ -15,21 +18,17 @@ defmodule Macrina.Handler do
     Telemetry
   }
 
-  @type t :: module() | {:router, module(), map()}
+  @type target :: {router :: module(), context :: map()}
 
-  def call(handler, %State{} = connection, %Message{} = message) do
-    case handler do
-      {:router, router, context} -> call_router(router, context, connection, message)
-      module when is_atom(module) -> module.call(connection, message)
-    end
+  @spec call(target(), State.t(), Message.t() | Chunk.t()) :: Message.t() | nil
+  def call({router, context}, %State{} = connection, %Message{} = message)
+      when is_atom(router) and is_map(context) do
+    call_router(router, context, connection, message)
   end
 
-  def call({:router, router, context}, %State{} = connection, %Chunk{} = chunk) do
+  def call({router, context}, %State{} = connection, %Chunk{} = chunk)
+      when is_atom(router) and is_map(context) do
     call_router_block1(router, context, connection, chunk)
-  end
-
-  def call(module, %State{} = connection, %Chunk{} = chunk) when is_atom(module) do
-    module.call(connection, chunk)
   end
 
   defp call_router(router, context, connection, message) do

@@ -12,15 +12,19 @@ defmodule Macrina.ObserveTest do
     Server
   }
 
-  defmodule ClientEndpointHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule ClientEndpointRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
-  defmodule ObserveHandler do
-    def call(_connection, message) do
-      Message.response!(message, code: :content, payload: "initial", type: :ack)
+  defmodule ObserveRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context) do
+      Response.new(:content, payload: "initial")
     end
   end
 
@@ -67,14 +71,14 @@ defmodule Macrina.ObserveTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    assert {:ok, server} = Server.start_link(handler: ObserveHandler, port: 0)
+    assert {:ok, server} = Server.start_link(router: ObserveRouter, port: 0)
     {:ok, server_socket} = Endpoint.socket(server)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
 
     endpoint_name = {:global, {:observe_test_endpoint, make_ref()}}
 
     {:ok, endpoint} =
-      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+      Endpoint.start_link(router: ClientEndpointRouter, port: 0, name: endpoint_name)
 
     {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
 
@@ -146,7 +150,7 @@ defmodule Macrina.ObserveTest do
     endpoint_name = {:global, {:observe_block2_endpoint, make_ref()}}
 
     {:ok, endpoint} =
-      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+      Endpoint.start_link(router: ClientEndpointRouter, port: 0, name: endpoint_name)
 
     {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
 

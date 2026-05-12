@@ -3,10 +3,11 @@ defmodule Macrina.EndpointTest do
 
   alias Macrina.{Block1, Endpoint, Message, Message.Opts.Block}
 
-  defmodule NilHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule NilRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
   defmodule StreamingRouter do
@@ -36,7 +37,7 @@ defmodule Macrina.EndpointTest do
   test "public endpoint propagates block1 policy" do
     policy = Block1.new!(preferred_block_size: 32)
 
-    assert {:ok, endpoint} = Endpoint.start_link(handler: NilHandler, port: 0, block1: policy)
+    assert {:ok, endpoint} = Endpoint.start_link(router: NilRouter, port: 0, block1: policy)
 
     {:ok, server_socket} = Endpoint.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
@@ -74,10 +75,8 @@ defmodule Macrina.EndpointTest do
       :persistent_term.erase({StreamingRouter, :test_pid})
     end)
 
-    handler = {:router, StreamingRouter, %{}}
-
     assert {:ok, endpoint} =
-             Endpoint.start_link(handler: handler, port: 0, block1: [mode: :streaming])
+             Endpoint.start_link(router: StreamingRouter, port: 0, block1: [mode: :streaming])
 
     {:ok, server_socket} = Endpoint.socket(endpoint)
     {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
@@ -127,11 +126,9 @@ defmodule Macrina.EndpointTest do
     assert reply_message.type == :ack
   end
 
-  test "public endpoint rejects streaming block1 mode for router handlers without a callback" do
-    router_handler = {:router, __MODULE__.NilHandler, %{}}
-
+  test "public endpoint rejects streaming block1 mode for routers without a block1/2 callback" do
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
-             Endpoint.start_link(handler: router_handler, port: 0, block1: [mode: :streaming])
+             Endpoint.start_link(router: __MODULE__.NilRouter, port: 0, block1: [mode: :streaming])
   end
 
   describe "next_message_id/1" do

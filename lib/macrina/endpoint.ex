@@ -16,7 +16,8 @@ defmodule Macrina.Endpoint do
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
   def start_link(args) do
-    with {:ok, normalized_args} <- normalize_block1_opts(args),
+    with {:ok, args} <- normalize_router_opt(args),
+         {:ok, normalized_args} <- normalize_block1_opts(args),
          {:ok, handler} <- fetch_opt(normalized_args, :handler),
          {:ok, port} <- fetch_opt(normalized_args, :port) do
       name = Keyword.get(args, :name, __MODULE__)
@@ -24,6 +25,37 @@ defmodule Macrina.Endpoint do
       init_args = Keyword.put(init_args, :port, port)
 
       GenServer.start_link(__MODULE__, init_args, name: name)
+    end
+  end
+
+  # Converts the friendlier `:router`/`:context` opts into the internal
+  # `:handler` tuple that the rest of the pipeline expects. `Macrina.Server`
+  # already builds the tuple itself; tests that hit `Endpoint.start_link/1`
+  # directly can use `:router` instead of constructing the tuple by hand.
+  defp normalize_router_opt(args) do
+    case {Keyword.get(args, :router), Keyword.get(args, :handler)} do
+      {nil, nil} ->
+        {:error, {:missing_option, :router}}
+
+      {router, nil} when is_atom(router) ->
+        context = Keyword.get(args, :context, %{})
+
+        normalized =
+          args
+          |> Keyword.put(:handler, {router, context})
+          |> Keyword.delete(:router)
+          |> Keyword.delete(:context)
+
+        {:ok, normalized}
+
+      {nil, {router, context}} when is_atom(router) and is_map(context) ->
+        {:ok, args}
+
+      {nil, _other} ->
+        {:error, {:invalid_handler, Keyword.get(args, :handler)}}
+
+      {_router, _handler} ->
+        {:error, {:conflicting_options, [:router, :handler]}}
     end
   end
 
@@ -194,7 +226,8 @@ defmodule Macrina.Endpoint do
     end
   end
 
-  defp ensure_supported_block1_mode(%Block1{mode: :streaming}, {:router, router, _context}) do
+  defp ensure_supported_block1_mode(%Block1{mode: :streaming}, {router, _context})
+       when is_atom(router) do
     if Router.supports_block1_streaming?(router) do
       :ok
     else

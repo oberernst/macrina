@@ -37,7 +37,8 @@ defmodule Macrina.Peer.Session do
   @response_codes Codes.response_codes()
 
   def start_link(args) do
-    with {:ok, handler} <- fetch_opt(args, :handler),
+    with {:ok, args} <- normalize_router_opt(args),
+         {:ok, handler} <- fetch_opt(args, :handler),
          {:ok, ip} <- fetch_opt(args, :ip),
          {:ok, port} <- fetch_opt(args, :port),
          {:ok, socket} <- fetch_opt(args, :socket) do
@@ -64,6 +65,37 @@ defmodule Macrina.Peer.Session do
 
         GenServer.start_link(__MODULE__, state, name: name)
       end
+    end
+  end
+
+  # Same friendly `:router`/`:context` → `:handler` tuple normalization as
+  # `Macrina.Endpoint`. Internal callers (`Macrina.Server` →
+  # `Macrina.Endpoint` → here) already pass the tuple; tests that bypass the
+  # public surface can use `:router` directly.
+  defp normalize_router_opt(args) do
+    case {Keyword.get(args, :router), Keyword.get(args, :handler)} do
+      {nil, nil} ->
+        {:error, {:missing_option, :router}}
+
+      {router, nil} when is_atom(router) ->
+        context = Keyword.get(args, :context, %{})
+
+        normalized =
+          args
+          |> Keyword.put(:handler, {router, context})
+          |> Keyword.delete(:router)
+          |> Keyword.delete(:context)
+
+        {:ok, normalized}
+
+      {nil, {router, context}} when is_atom(router) and is_map(context) ->
+        {:ok, args}
+
+      {nil, _other} ->
+        {:error, {:invalid_handler, Keyword.get(args, :handler)}}
+
+      {_router, _handler} ->
+        {:error, {:conflicting_options, [:router, :handler]}}
     end
   end
 

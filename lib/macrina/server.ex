@@ -2,21 +2,27 @@ defmodule Macrina.Server do
   @moduledoc """
   Public entry point for starting a CoAP server.
 
-  Wraps `Macrina.Endpoint` with ergonomic options for handler/router selection,
+  Wraps `Macrina.Endpoint` with ergonomic options for router selection,
   Block1 upload policy, and observer notifications.
 
   ## Starting a server
 
-      {:ok, server} = Macrina.Server.start_link(
-        handler: MyApp.CoapHandler,
-        port: 5683
-      )
+      defmodule MyApp.Router do
+        @behaviour Macrina.Router
 
-  Or with a router and Block1 policy:
+        @impl true
+        def call(_request, _context) do
+          Macrina.Response.new(:content, payload: "hello", content_format: :text_plain)
+        end
+      end
+
+      {:ok, _server} = Macrina.Server.start_link(router: MyApp.Router, port: 5683)
+
+  Or with a Block1 policy for streaming uploads:
 
       block1 = Macrina.Block1.new!(mode: :streaming, preferred_block_size: 512)
 
-      {:ok, server} = Macrina.Server.start_link(
+      {:ok, _server} = Macrina.Server.start_link(
         router: MyApp.Router,
         port: 5683,
         block1: block1
@@ -24,11 +30,9 @@ defmodule Macrina.Server do
 
   ## Options
 
-    * `:handler` — a module exporting `call(connection, message)` that returns
-      a `Macrina.Message` reply or `nil` (mutually exclusive with `:router`)
-    * `:router` — a module implementing `Macrina.Router` (mutually exclusive with `:handler`)
+    * `:router` — a module implementing `Macrina.Router` (required)
     * `:context` — an arbitrary map passed to router callbacks (default: `%{}`)
-    * `:port` — Endpoint port to bind (required)
+    * `:port` — UDP port to bind (required)
     * `:name` — registered name for the endpoint process
     * `:block1` — a `Macrina.Block1` policy struct for upload handling
 
@@ -92,22 +96,21 @@ defmodule Macrina.Server do
   end
 
   defp build_endpoint_opts(opts) do
-    handler = Keyword.get(opts, :handler)
-    router = Keyword.get(opts, :router)
-    context = Keyword.get(opts, :context, %{})
+    case Keyword.get(opts, :router) do
+      nil ->
+        {:error, {:missing_option, :router}}
 
-    cond do
-      handler -> {:ok, endpoint_opts(opts, handler)}
-      router -> {:ok, endpoint_opts(opts, {:router, router, context})}
-      true -> {:error, {:missing_option, :handler}}
+      router when is_atom(router) ->
+        context = Keyword.get(opts, :context, %{})
+
+        endpoint_opts =
+          opts
+          |> Keyword.put(:handler, {router, context})
+          |> Keyword.delete(:router)
+          |> Keyword.delete(:context)
+
+        {:ok, endpoint_opts}
     end
-  end
-
-  defp endpoint_opts(opts, handler) do
-    opts
-    |> Keyword.put(:handler, handler)
-    |> Keyword.delete(:router)
-    |> Keyword.delete(:context)
   end
 
   defp resolve_endpoint(server) when is_pid(server) do
