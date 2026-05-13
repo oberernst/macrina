@@ -1,6 +1,6 @@
 defmodule Macrina.Connection.Server do
   use GenServer, restart: :transient
-  alias Macrina.{Connection, Message, Message.Opts.Block}
+  alias Macrina.{BlockTransfer, Connection, Message, Message.Opts.Block}
   import Connection, only: :functions
   require Logger
 
@@ -16,7 +16,6 @@ defmodule Macrina.Connection.Server do
     name = Keyword.get(args, :name, {:global, {__MODULE__, Macrina.conn_name(ip, port)}})
 
     state = %Connection{
-      blocks: %{},
       callers: [],
       handler: handler,
       ids: [],
@@ -54,79 +53,9 @@ defmodule Macrina.Connection.Server do
 
   def handle_info({:coap, packet}, %Connection{last_reply: {last_token, reply}} = state) do
     case Message.decode(packet) do
-      # a multi-part upload is ongoing, add the block to existing block map,
-      # reply to the remote client, then pass this message to any local clients
-      # who may be waiting for it
-      {:ok, %Message{descriptive_block: %Block{more: true}} = message} ->
-        Logger.info("#{__MODULE__}.handle_info/2 continuing block transfer",
-          conn: inspect(state),
-          request: inspect(message)
-        )
+      {:ok, %Message{descriptive_block: %Block{}} = message} ->
+        handle_block_message(state, message)
 
-        {:noreply,
-         state
-         |> push_block(message)
-         |> handle(message, :continue)
-         |> reply_to_client(message), @timeout}
-
-      # a multi-part upload is supposedly finished:
-      # - if we already replied to this message, send that
-      # - if the upload is incomplete, send `:request_entity_incomplete` response and reset blocks
-      # - if the upload *is* complete, send the application's response and reset blocks
-      # - finally, always reply to any clients that may have been waiting for this message
-      {:ok, %Message{descriptive_block: %Block{more: false}} = message} ->
-        payload = state |> push_block(message) |> read_blocks()
-
-        state =
-          cond do
-            message.token == last_token ->
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 resending cached reply for completed block transfer",
-                conn: inspect(state),
-                request: inspect(message)
-              )
-
-              if reply, do: Connection.reply(state, reply)
-              reply_to_client(state, message)
-
-            is_nil(payload) ->
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 incomplete block transfer",
-                conn: inspect(state),
-                request: inspect(message)
-              )
-
-              bin =
-                message
-                |> Message.response(code: :request_entity_incomplete, type: :ack)
-                |> Message.encode()
-
-              Connection.reply(state, bin)
-
-              state
-              |> set_last_reply(message.token, bin)
-              |> reset_blocks()
-              |> reply_to_client(message)
-
-            true ->
-              full_message = %Message{message | payload: payload}
-
-              Logger.info(
-                "#{__MODULE__}.handle_info/2 completed block transfer",
-                conn: inspect(state),
-                request: inspect(full_message)
-              )
-
-              state
-              |> handle(full_message)
-              |> reset_blocks()
-              |> reply_to_client(full_message)
-          end
-
-        {:noreply, state, @timeout}
-
-      # a single-datagram message was received but its token was already
-      # replied to, so resend the cached reply
       {:ok, %Message{token: token} = message} when token == last_token ->
         if reply, do: Connection.reply(state, reply)
         reply_to_client(state, message)
@@ -169,39 +98,55 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle(%Connection{} = state, message) do
-    if reply = state.handler.call(state, message) do
-      bin = Message.encode(reply)
+    {state, _bin} = handle_and_capture(state, message)
+    state
+  end
 
-      Logger.info("#{__MODULE__}.handle/2 encoding and replying",
-        conn: inspect(state),
-        request: inspect(message),
-        response: %{encoded: Base.encode64(bin), raw: reply}
-      )
+  defp handle_and_capture(%Connection{} = state, message) do
+    case state.handler.call(state, message) do
+      nil ->
+        Logger.info("#{__MODULE__}.handle/2 did not reply",
+          conn: inspect(state),
+          request: inspect(message)
+        )
 
-      Connection.reply(state, bin)
-      set_last_reply(state, message.token, bin)
-    else
-      Logger.info("#{__MODULE__}.handle/2 did not reply",
-        conn: inspect(state),
-        request: inspect(message)
-      )
+        {set_last_reply(state, message.token, nil), nil}
 
-      set_last_reply(state, message.token, nil)
+      reply ->
+        bin = Message.encode(reply)
+
+        Logger.info("#{__MODULE__}.handle/2 encoding and replying",
+          conn: inspect(state),
+          request: inspect(message),
+          response: %{encoded: Base.encode64(bin), raw: reply}
+        )
+
+        Connection.reply(state, bin)
+        {set_last_reply(state, message.token, bin), bin}
     end
   end
 
-  defp handle(%Connection{} = state, message, :continue) do
-    bin =
-      message
-      |> Message.response(code: :continue, type: :ack)
-      |> Message.encode()
+  defp handle_block_message(%Connection{} = state, %Message{} = message) do
+    case BlockTransfer.handle_block(state.ip, message.token, state.handler, message) do
+      {:continue, bin} -> reply_with(state, message, bin)
+      {:incomplete, bin} -> reply_with(state, message, bin)
+      {:duplicate, bin} -> reply_with(state, message, bin)
+      {:assembled, full} -> handle_assembled_block(state, full)
+    end
+  end
 
-    Logger.info("#{__MODULE__}.handle/3 continuing",
-      conn: inspect(state),
-      request: inspect(message)
-    )
+  defp reply_with(state, message, nil) do
+    {:noreply, reply_to_client(state, message), @timeout}
+  end
 
+  defp reply_with(state, message, bin) when is_binary(bin) do
     Connection.reply(state, bin)
-    state
+    {:noreply, reply_to_client(state, message), @timeout}
+  end
+
+  defp handle_assembled_block(state, full) do
+    {state, reply_bin} = handle_and_capture(state, full)
+    BlockTransfer.cache_completion(state.ip, full.token, reply_bin)
+    {:noreply, reply_to_client(state, full), @timeout}
   end
 end
