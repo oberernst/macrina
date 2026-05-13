@@ -128,25 +128,25 @@ defmodule Macrina.Connection.Server do
 
   defp handle_block_message(%Connection{} = state, %Message{} = message) do
     case BlockTransfer.handle_block(state.ip, message.token, state.handler, message) do
-      {:continue, ack_bin} ->
-        Connection.reply(state, ack_bin)
-        {:noreply, reply_to_client(state, message), @timeout}
-
-      {:assembled, full_message} ->
-        {state, reply_bin} = handle_and_capture(state, full_message)
-        BlockTransfer.cache_completion(state.ip, message.token, reply_bin)
-        {:noreply, reply_to_client(state, full_message), @timeout}
-
-      {:incomplete, ack_bin} ->
-        Connection.reply(state, ack_bin)
-        {:noreply, reply_to_client(state, message), @timeout}
-
-      {:duplicate, nil} ->
-        {:noreply, reply_to_client(state, message), @timeout}
-
-      {:duplicate, bin} when is_binary(bin) ->
-        Connection.reply(state, bin)
-        {:noreply, reply_to_client(state, message), @timeout}
+      {:continue, bin} -> reply_with(state, message, bin)
+      {:incomplete, bin} -> reply_with(state, message, bin)
+      {:duplicate, bin} -> reply_with(state, message, bin)
+      {:assembled, full} -> handle_assembled_block(state, full)
     end
+  end
+
+  defp reply_with(state, message, nil) do
+    {:noreply, reply_to_client(state, message), @timeout}
+  end
+
+  defp reply_with(state, message, bin) when is_binary(bin) do
+    Connection.reply(state, bin)
+    {:noreply, reply_to_client(state, message), @timeout}
+  end
+
+  defp handle_assembled_block(state, full) do
+    {state, reply_bin} = handle_and_capture(state, full)
+    BlockTransfer.cache_completion(state.ip, full.token, reply_bin)
+    {:noreply, reply_to_client(state, full), @timeout}
   end
 end

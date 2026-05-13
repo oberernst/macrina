@@ -21,16 +21,13 @@ defmodule Macrina.BlockTransfer do
         }
 
   def start_link(args) do
-    ip = Keyword.fetch!(args, :ip)
-    token = Keyword.fetch!(args, :token)
-    handler = Keyword.fetch!(args, :handler)
-    name = Keyword.get(args, :name)
-    init_arg = %{ip: ip, token: token, handler: handler}
+    init_arg = %{
+      ip: Keyword.fetch!(args, :ip),
+      token: Keyword.fetch!(args, :token),
+      handler: Keyword.fetch!(args, :handler)
+    }
 
-    case name do
-      nil -> GenServer.start_link(__MODULE__, init_arg)
-      name -> GenServer.start_link(__MODULE__, init_arg, name: name)
-    end
+    GenServer.start_link(__MODULE__, init_arg, Keyword.take(args, [:name]))
   end
 
   @spec handle_block(pid(), Message.t()) ::
@@ -55,46 +52,31 @@ defmodule Macrina.BlockTransfer do
 
   defp lookup_or_start(ip, token, handler) do
     case :global.whereis_name({__MODULE__, ip, token}) do
-      pid when is_pid(pid) ->
-        pid
+      pid when is_pid(pid) -> pid
+      :undefined -> start_under_supervisor(ip, token, handler)
+    end
+  end
 
-      :undefined ->
-        spec = %{
-          id: __MODULE__,
-          start:
-            {__MODULE__, :start_link,
-             [
-               [
-                 ip: ip,
-                 token: token,
-                 handler: handler,
-                 name: {:global, {__MODULE__, ip, token}}
-               ]
-             ]},
-          restart: :transient,
-          type: :worker
-        }
+  defp start_under_supervisor(ip, token, handler) do
+    args = [ip: ip, token: token, handler: handler, name: {:global, {__MODULE__, ip, token}}]
 
-        case DynamicSupervisor.start_child(Macrina.BlockTransfer.Supervisor, spec) do
-          {:ok, pid} -> pid
-          {:error, {:already_started, pid}} -> pid
-        end
+    case DynamicSupervisor.start_child(Macrina.BlockTransfer.Supervisor, {__MODULE__, args}) do
+      {:ok, pid} -> pid
+      {:error, {:already_started, pid}} -> pid
     end
   end
 
   @doc false
   @spec cache_completion(pid(), binary() | nil) :: :ok
-  def cache_completion(pid, reply_bin)
-      when is_pid(pid) and (is_binary(reply_bin) or is_nil(reply_bin)) do
+  def cache_completion(pid, reply_bin) when is_pid(pid) do
     GenServer.call(pid, {:cache_completion, reply_bin})
   end
 
   @spec cache_completion(:inet.ip_address(), binary(), binary() | nil) :: :ok
-  def cache_completion(ip, token, reply_bin)
-      when is_binary(reply_bin) or is_nil(reply_bin) do
+  def cache_completion(ip, token, reply_bin) do
     case :global.whereis_name({__MODULE__, ip, token}) do
       :undefined -> :ok
-      pid -> GenServer.call(pid, {:cache_completion, reply_bin})
+      pid -> cache_completion(pid, reply_bin)
     end
   end
 

@@ -15,21 +15,14 @@ defmodule Macrina.Blocks do
   end
 
   @spec read(acc()) :: {:ok, binary()} | {:error, {:missing, non_neg_integer()}}
-  def read(acc) when acc == %{}, do: {:error, {:missing, 0}}
+  def read(acc) when map_size(acc) == 0, do: {:error, {:missing, 0}}
 
   def read(acc) do
-    sorted = Enum.sort_by(acc, &elem(&1, 0), :asc)
+    expected = 0..(map_size(acc) - 1)
 
-    Enum.reduce_while(sorted, {-1, <<>>}, fn {num, chunk}, {last, payload} ->
-      if num == last + 1 do
-        {:cont, {num, payload <> chunk}}
-      else
-        {:halt, {:missing, last + 1}}
-      end
-    end)
-    |> case do
-      {_last, payload} when is_binary(payload) -> {:ok, payload}
-      {:missing, n} -> {:error, {:missing, n}}
+    case Enum.find(expected, &(not Map.has_key?(acc, &1))) do
+      nil -> {:ok, Enum.map_join(expected, "", &Map.fetch!(acc, &1))}
+      n -> {:error, {:missing, n}}
     end
   end
 end
