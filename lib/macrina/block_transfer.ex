@@ -7,6 +7,7 @@ defmodule Macrina.BlockTransfer do
   alias Macrina.Message.Opts.Block
 
   @assembling_timeout :timer.minutes(5)
+  @complete_timeout :timer.seconds(247)
 
   defstruct [:ip, :token, :handler, :blocks, :last_reply, :phase]
 
@@ -30,8 +31,25 @@ defmodule Macrina.BlockTransfer do
           {:continue, binary()}
           | {:assembled, Message.t()}
           | {:incomplete, binary()}
+          | {:duplicate, binary() | nil}
   def handle_block(pid, %Message{} = message) do
     GenServer.call(pid, {:block, message})
+  end
+
+  @doc false
+  @spec cache_completion(pid(), binary() | nil) :: :ok
+  def cache_completion(pid, reply_bin)
+      when is_pid(pid) and (is_binary(reply_bin) or is_nil(reply_bin)) do
+    GenServer.call(pid, {:cache_completion, reply_bin})
+  end
+
+  @spec cache_completion(:inet.ip_address(), binary(), binary() | nil) :: :ok
+  def cache_completion(ip, token, reply_bin)
+      when is_binary(reply_bin) or is_nil(reply_bin) do
+    case :global.whereis_name({__MODULE__, ip, token}) do
+      :undefined -> :ok
+      pid -> GenServer.call(pid, {:cache_completion, reply_bin})
+    end
   end
 
   @impl true
@@ -79,6 +97,22 @@ defmodule Macrina.BlockTransfer do
 
         {:reply, {:incomplete, bin}, %{state | blocks: blocks}, @assembling_timeout}
     end
+  end
+
+  def handle_call(
+        {:block, %Message{descriptive_block: %Block{more: false}}},
+        _from,
+        %__MODULE__{phase: :complete, last_reply: reply_bin} = state
+      ) do
+    {:reply, {:duplicate, reply_bin}, state, @complete_timeout}
+  end
+
+  def handle_call(
+        {:cache_completion, reply_bin},
+        _from,
+        %__MODULE__{phase: :assembling} = state
+      ) do
+    {:reply, :ok, %{state | last_reply: reply_bin, phase: :complete}, @complete_timeout}
   end
 
   @impl true

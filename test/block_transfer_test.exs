@@ -64,4 +64,29 @@ defmodule Macrina.BlockTransferTest do
       assert msg.type == :ack
     end
   end
+
+  describe "cache_completion and :duplicate" do
+    test "after cache_completion, a retransmit of the final block returns :duplicate with the cached bin" do
+      pid = start_transfer()
+
+      assert {:continue, _} = BlockTransfer.handle_block(pid, block_msg(0, "aa", true))
+      assert {:assembled, _} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+
+      reply_bin = "the-application-reply-binary"
+      assert :ok = BlockTransfer.cache_completion(pid, reply_bin)
+
+      assert {:duplicate, ^reply_bin} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+    end
+
+    test "cache_completion with nil yields {:duplicate, nil} on retransmit" do
+      pid = start_transfer()
+
+      assert {:continue, _} = BlockTransfer.handle_block(pid, block_msg(0, "aa", true))
+      assert {:assembled, _} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+
+      assert :ok = BlockTransfer.cache_completion(pid, nil)
+
+      assert {:duplicate, nil} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+    end
+  end
 end
