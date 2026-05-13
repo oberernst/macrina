@@ -89,4 +89,43 @@ defmodule Macrina.BlockTransferTest do
       assert {:duplicate, nil} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
     end
   end
+
+  describe "handle_block/4 with :global registration" do
+    setup do
+      ip = {127, 0, 0, 1}
+      token = :crypto.strong_rand_bytes(8)
+
+      on_exit(fn ->
+        case :global.whereis_name({Macrina.BlockTransfer, ip, token}) do
+          :undefined -> :ok
+          pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+        end
+      end)
+
+      {:ok, ip: ip, token: token}
+    end
+
+    test "starts a globally-registered process on first call", %{ip: ip, token: token} do
+      msg = block_msg(0, "aa", true, token)
+
+      assert {:continue, _} = BlockTransfer.handle_block(ip, token, NilHandler, msg)
+
+      pid = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+      assert is_pid(pid)
+    end
+
+    test "second call resolves the same pid", %{ip: ip, token: token} do
+      msg0 = block_msg(0, "aa", true, token)
+      msg1 = block_msg(1, "bb", false, token)
+
+      assert {:continue, _} = BlockTransfer.handle_block(ip, token, NilHandler, msg0)
+      pid_after_first = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+
+      assert {:assembled, %Message{payload: "aabb"}} =
+               BlockTransfer.handle_block(ip, token, NilHandler, msg1)
+
+      pid_after_second = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+      assert pid_after_first == pid_after_second
+    end
+  end
 end

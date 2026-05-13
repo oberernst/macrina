@@ -24,7 +24,13 @@ defmodule Macrina.BlockTransfer do
     ip = Keyword.fetch!(args, :ip)
     token = Keyword.fetch!(args, :token)
     handler = Keyword.fetch!(args, :handler)
-    GenServer.start_link(__MODULE__, %{ip: ip, token: token, handler: handler})
+    name = Keyword.get(args, :name)
+    init_arg = %{ip: ip, token: token, handler: handler}
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, init_arg)
+      name -> GenServer.start_link(__MODULE__, init_arg, name: name)
+    end
   end
 
   @spec handle_block(pid(), Message.t()) ::
@@ -34,6 +40,46 @@ defmodule Macrina.BlockTransfer do
           | {:duplicate, binary() | nil}
   def handle_block(pid, %Message{} = message) do
     GenServer.call(pid, {:block, message})
+  end
+
+  @spec handle_block(:inet.ip_address(), binary(), module(), Message.t()) ::
+          {:continue, binary()}
+          | {:assembled, Message.t()}
+          | {:incomplete, binary()}
+          | {:duplicate, binary() | nil}
+  def handle_block(ip, token, handler, %Message{} = message) do
+    ip
+    |> lookup_or_start(token, handler)
+    |> handle_block(message)
+  end
+
+  defp lookup_or_start(ip, token, handler) do
+    case :global.whereis_name({__MODULE__, ip, token}) do
+      pid when is_pid(pid) ->
+        pid
+
+      :undefined ->
+        spec = %{
+          id: __MODULE__,
+          start:
+            {__MODULE__, :start_link,
+             [
+               [
+                 ip: ip,
+                 token: token,
+                 handler: handler,
+                 name: {:global, {__MODULE__, ip, token}}
+               ]
+             ]},
+          restart: :transient,
+          type: :worker
+        }
+
+        case DynamicSupervisor.start_child(Macrina.BlockTransfer.Supervisor, spec) do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+    end
   end
 
   @doc false
