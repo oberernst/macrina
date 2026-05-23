@@ -3,6 +3,8 @@ defmodule Macrina.BlockTransfer do
 
   use GenServer, restart: :transient
 
+  require Logger
+
   alias Macrina.{Blocks, Message}
   alias Macrina.Message.Opts.Block
 
@@ -91,33 +93,62 @@ defmodule Macrina.BlockTransfer do
       phase: :assembling
     }
 
+    Logger.info("[BlockTransfer] started", peer: peer_id(state))
     {:ok, state, @assembling_timeout}
   end
 
   @impl true
   def handle_call(
-        {:block, %Message{descriptive_block: %Block{more: true}} = message},
+        {:block, %Message{descriptive_block: %Block{} = b} = message},
         _from,
         %__MODULE__{phase: :assembling} = state
-      ) do
+      )
+      when b.more == true do
     blocks = Blocks.push(state.blocks, message)
+
+    Logger.info("[BlockTransfer] block accepted",
+      peer: peer_id(state),
+      block: b.number,
+      size: byte_size(message.payload),
+      more: true
+    )
+
     ack_bin = message |> Message.response(code: :continue, type: :ack) |> Message.encode()
     {:reply, {:continue, ack_bin}, %{state | blocks: blocks}, @assembling_timeout}
   end
 
   def handle_call(
-        {:block, %Message{descriptive_block: %Block{more: false}} = message},
+        {:block, %Message{descriptive_block: %Block{more: false} = b} = message},
         _from,
         %__MODULE__{phase: :assembling} = state
       ) do
     blocks = Blocks.push(state.blocks, message)
 
+    Logger.info("[BlockTransfer] block accepted",
+      peer: peer_id(state),
+      block: b.number,
+      size: byte_size(message.payload),
+      more: false
+    )
+
     case Blocks.read(blocks) do
       {:ok, payload} ->
+        Logger.info("[BlockTransfer] blocks assembled",
+          peer: peer_id(state),
+          count: map_size(blocks),
+          total_size: byte_size(payload)
+        )
+
         full = %Message{message | payload: payload}
         {:reply, {:assembled, full}, %{state | blocks: blocks}, @assembling_timeout}
 
-      {:error, {:missing, _n}} ->
+      {:error, {:missing, n}} ->
+        Logger.info("[BlockTransfer] blocks incomplete",
+          peer: peer_id(state),
+          missing: n,
+          have: map_size(blocks)
+        )
+
         bin =
           message
           |> Message.response(code: :request_entity_incomplete, type: :ack)
@@ -132,6 +163,11 @@ defmodule Macrina.BlockTransfer do
         _from,
         %__MODULE__{phase: :complete, last_reply: reply_bin} = state
       ) do
+    Logger.info("[BlockTransfer] duplicate final block, replaying cached reply",
+      peer: peer_id(state),
+      cached: not is_nil(reply_bin)
+    )
+
     {:reply, {:duplicate, reply_bin}, state, @complete_timeout}
   end
 
@@ -140,11 +176,27 @@ defmodule Macrina.BlockTransfer do
         _from,
         %__MODULE__{phase: :assembling} = state
       ) do
+    reply_size = if is_binary(reply_bin), do: byte_size(reply_bin), else: 0
+
+    Logger.info("[BlockTransfer] completion cached",
+      peer: peer_id(state),
+      reply_size: reply_size
+    )
+
     {:reply, :ok, %{state | last_reply: reply_bin, phase: :complete}, @complete_timeout}
   end
 
   @impl true
   def handle_info(:timeout, state) do
+    Logger.info("[BlockTransfer] timeout, shutting down",
+      peer: peer_id(state),
+      phase: state.phase
+    )
+
     {:stop, :normal, state}
+  end
+
+  defp peer_id(%__MODULE__{ip: ip, token: token}) do
+    "#{:inet.ntoa(ip)}/#{Base.encode16(token, case: :lower)}"
   end
 end

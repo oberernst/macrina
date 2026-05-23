@@ -1,6 +1,8 @@
 defmodule Macrina.BlockTransferTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Macrina.BlockTransfer
   alias Macrina.Message
   alias Macrina.Message.Opts.Block
@@ -87,6 +89,52 @@ defmodule Macrina.BlockTransferTest do
       assert :ok = BlockTransfer.cache_completion(pid, nil)
 
       assert {:duplicate, nil} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+    end
+  end
+
+  describe "info-level logging across the lifecycle" do
+    test "logs [BlockTransfer] block accepted with block number and assembled total" do
+      log =
+        capture_log([level: :info], fn ->
+          pid = start_transfer()
+          assert {:continue, _} = BlockTransfer.handle_block(pid, block_msg(0, "aa", true))
+          assert {:assembled, _} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+          assert :ok = BlockTransfer.cache_completion(pid, "reply")
+        end)
+
+      assert log =~ "[BlockTransfer] block accepted"
+      assert log =~ "block=0"
+      assert log =~ "[BlockTransfer] blocks assembled"
+      assert log =~ "total_size=4"
+      assert log =~ "[BlockTransfer] completion cached"
+      assert log =~ "reply_size=5"
+    end
+
+    test "logs [BlockTransfer] blocks incomplete with the missing block number" do
+      log =
+        capture_log([level: :info], fn ->
+          pid = start_transfer()
+          assert {:continue, _} = BlockTransfer.handle_block(pid, block_msg(0, "aa", true))
+          assert {:incomplete, _} = BlockTransfer.handle_block(pid, block_msg(2, "cc", false))
+        end)
+
+      assert log =~ "[BlockTransfer] blocks incomplete"
+      assert log =~ "missing=1"
+      assert log =~ "have=2"
+    end
+
+    test "logs [BlockTransfer] duplicate final block once cached" do
+      log =
+        capture_log([level: :info], fn ->
+          pid = start_transfer()
+          assert {:continue, _} = BlockTransfer.handle_block(pid, block_msg(0, "aa", true))
+          assert {:assembled, _} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+          assert :ok = BlockTransfer.cache_completion(pid, "reply")
+          assert {:duplicate, _} = BlockTransfer.handle_block(pid, block_msg(1, "bb", false))
+        end)
+
+      assert log =~ "[BlockTransfer] duplicate final block"
+      assert log =~ "cached=true"
     end
   end
 

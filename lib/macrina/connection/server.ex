@@ -36,7 +36,7 @@ defmodule Macrina.Connection.Server do
   # ------------------------------------------- Server ------------------------------------------- #
 
   def init(state) do
-    Logger.info("Macrina connection started", state: inspect(state))
+    Logger.info("[Connection] started", state: inspect(state))
     {:ok, state, @timeout}
   end
 
@@ -73,7 +73,7 @@ defmodule Macrina.Connection.Server do
         {:noreply, state |> handle(message) |> reply_to_client(message), @timeout}
 
       _ ->
-        Logger.error("CoAP decoding failed", packet: Base.encode64(packet))
+        Logger.error("[Connection] CoAP decode failed", packet: Base.encode64(packet))
         {:noreply, state, @timeout}
     end
   end
@@ -83,7 +83,7 @@ defmodule Macrina.Connection.Server do
   end
 
   def terminate(:normal, state) do
-    Logger.info("Connection server shutting down", server: Macrina.conn_name(state.ip, state.port))
+    Logger.info("[Connection] shutting down", server: Macrina.conn_name(state.ip, state.port))
   end
 
   defp reply_to_client(%Connection{callers: callers} = state, message) do
@@ -105,7 +105,7 @@ defmodule Macrina.Connection.Server do
   defp handle_and_capture(%Connection{} = state, message) do
     case state.handler.call(state, message) do
       nil ->
-        Logger.info("#{__MODULE__}.handle/2 did not reply",
+        Logger.info("[Connection] handler returned no reply",
           conn: inspect(state),
           request: inspect(message)
         )
@@ -115,10 +115,10 @@ defmodule Macrina.Connection.Server do
       reply ->
         bin = Message.encode(reply)
 
-        Logger.info("#{__MODULE__}.handle/2 encoding and replying",
+        Logger.info("[Connection] handler reply encoded",
           conn: inspect(state),
           request: inspect(message),
-          response: %{encoded: Base.encode64(bin), raw: reply}
+          response: inspect(%{encoded: Base.encode64(bin), raw: reply})
         )
 
         Connection.reply(state, bin)

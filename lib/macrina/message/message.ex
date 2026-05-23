@@ -110,27 +110,33 @@ defmodule Macrina.Message do
       }}
 
   """
-  @spec decode(binary()) :: {:ok, %__MODULE__{}} | {:error, :bad_version}
+  @spec decode(binary()) ::
+          {:ok, %__MODULE__{}} | {:error, :bad_version | :malformed_payload_marker}
   def decode(
         <<version::2, type::2, token_length::4, code_class::3, code_detail::5, id::16,
           token::binary-size(token_length), rest::binary>>
       )
       when version == 1 do
-    {options, payload} = Binary.decode(rest)
-    code = Codes.parse(code_class, code_detail)
+    case Binary.decode(rest) do
+      {:ok, {options, payload}} ->
+        code = Codes.parse(code_class, code_detail)
 
-    message = %__MODULE__{
-      control_block: control_block(code, options),
-      descriptive_block: descriptive_block(code, options),
-      code: Codes.parse(code_class, code_detail),
-      id: id,
-      options: options,
-      payload: payload,
-      token: token,
-      type: Types.parse(type)
-    }
+        message = %__MODULE__{
+          control_block: control_block(code, options),
+          descriptive_block: descriptive_block(code, options),
+          code: code,
+          id: id,
+          options: options,
+          payload: payload,
+          token: token,
+          type: Types.parse(type)
+        }
 
-    {:ok, message}
+        {:ok, message}
+
+      {:error, _reason} = err ->
+        err
+    end
   end
 
   def decode(_request) do
@@ -183,8 +189,15 @@ defmodule Macrina.Message do
       }) do
     {c, dd} = Codes.parse(code)
 
-    <<1::size(2), Types.parse(type)::size(2), byte_size(token)::size(4), c::size(3), dd::size(5),
-      id::size(16), token::binary, Binary.encode(options)::binary, 255, payload::binary>>
+    header =
+      <<1::size(2), Types.parse(type)::size(2), byte_size(token)::size(4), c::size(3),
+        dd::size(5), id::size(16), token::binary, Binary.encode(options)::binary>>
+
+    # RFC 7252 §3.1: payload marker only appears when a non-empty payload follows.
+    case payload do
+      <<>> -> header
+      _ -> <<header::binary, 0xFF, payload::binary>>
+    end
   end
 
   @spec control_block(atom(), keyword()) :: Block.t() | nil

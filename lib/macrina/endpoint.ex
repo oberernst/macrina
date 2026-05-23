@@ -16,7 +16,7 @@ defmodule Macrina.Endpoint do
 
   def init({handler, port}) do
     {:ok, socket} = :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}])
-    Logger.info("UDP socket opened on port #{port}")
+    Logger.info("[Endpoint] UDP socket opened", port: port)
     {:ok, %__MODULE__{handler: handler, socket: socket}}
   end
 
@@ -39,19 +39,28 @@ defmodule Macrina.Endpoint do
   end
 
   def handle_info({:udp_error, _port, :econnreset}, state) do
-    Logger.error("UDP connection reset")
+    Logger.error("[Endpoint] UDP connection reset")
     {:noreply, state}
   end
 
   def handle_info({:udp, socket, ip, port, packet}, state) do
     conn_name = Macrina.conn_name(ip, port)
     init_args = {Server, handler: state.handler, ip: ip, port: port, socket: socket}
-    Logger.debug("UDP packet received", sender: conn_name, packet: Base.encode64(packet))
+
+    Logger.info("[Endpoint] UDP packet received",
+      sender: conn_name,
+      packet: Base.encode64(packet)
+    )
 
     case DynamicSupervisor.start_child(ConnectionSupervisor, init_args) do
-      {:ok, pid} -> send(pid, {:coap, packet})
-      {:error, {:already_started, pid}} -> send(pid, {:coap, packet})
-      {:error, err} -> Logger.error("failed to start Macrina.Connection", error: inspect(err))
+      {:ok, pid} ->
+        send(pid, {:coap, packet})
+
+      {:error, {:already_started, pid}} ->
+        send(pid, {:coap, packet})
+
+      {:error, err} ->
+        Logger.error("[Endpoint] failed to start Connection", error: inspect(err))
     end
 
     {:noreply, state}
