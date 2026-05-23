@@ -18,7 +18,7 @@ defmodule Macrina do
   ```
   Macrina.Server / Macrina.Client
         │
-  Macrina.Endpoint          ← Endpoint socket (GenServer over :gen_udp)
+  Macrina.Endpoint          ← Endpoint socket (GenServer over Macrina.Transport)
         │
   Macrina.Peer.Session ← per-peer GenServer (CON/NON/ACK/RST)
         │

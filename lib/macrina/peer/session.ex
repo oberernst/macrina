@@ -63,6 +63,7 @@ defmodule Macrina.Peer.Session do
             max_retransmit
           )
           |> with_message_id_counter(args)
+          |> with_transport(args)
 
         GenServer.start_link(__MODULE__, state, name: name)
       end
@@ -97,6 +98,10 @@ defmodule Macrina.Peer.Session do
   defp with_message_id_counter(%State{} = state, args) do
     counter = Keyword.get(args, :message_id_counter) || :atomics.new(1, signed: false)
     %State{state | message_id_counter: counter}
+  end
+
+  defp with_transport(%State{} = state, args) do
+    %State{state | transport: Keyword.get(args, :transport, Macrina.Transport.UDP)}
   end
 
   # Overwrites a message's id with the next value from the per-endpoint
@@ -139,7 +144,7 @@ defmodule Macrina.Peer.Session do
   def handle_call({:request, %Message{} = message}, from, %State{} = state) do
     case Message.encode(message) do
       {:ok, packet} ->
-        :gen_udp.send(state.socket, {state.ip, state.port}, packet)
+        state.transport.send(state.socket, {state.ip, state.port}, packet)
 
         next_state =
           state
@@ -528,7 +533,7 @@ defmodule Macrina.Peer.Session do
   end
 
   defp handle_retry_action({:retransmit, request}, state) do
-    :gen_udp.send(state.socket, {state.ip, state.port}, request.packet)
+    state.transport.send(state.socket, {state.ip, state.port}, request.packet)
 
     emit_retransmit(state, request)
     schedule_retry_timer(state, request.token, request.attempts)
@@ -865,7 +870,7 @@ defmodule Macrina.Peer.Session do
     with {:ok, next_message} <- Request.to_message(request),
          next_message = stamp_message_id(state, next_message),
          {:ok, packet} <- Message.encode(next_message) do
-      :gen_udp.send(state.socket, {state.ip, state.port}, packet)
+      state.transport.send(state.socket, {state.ip, state.port}, packet)
       state
     else
       _other -> state

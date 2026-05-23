@@ -1,17 +1,18 @@
 defmodule Macrina.Endpoint do
   @moduledoc false
 
-  # Endpoint socket manager. GenServer that opens a `:gen_udp` socket and spawns
-  # a `Macrina.Peer.Session` per remote peer. Not a public entry point —
-  # use `Macrina.Server.start_link/1` instead.
+  # Endpoint socket manager. GenServer that opens a transport (default
+  # `Macrina.Transport.UDP`) and spawns a `Macrina.Peer.Session` per
+  # remote peer. Not a public entry point — use
+  # `Macrina.Server.start_link/1` instead.
 
   use GenServer
-  alias Macrina.{Block1, ConnectionSupervisor, Peer.Session, Router, Telemetry}
+  alias Macrina.{Block1, ConnectionSupervisor, Peer.Session, Router, Telemetry, Transport}
 
   @connection_option_keys [:block1_max_body_size, :block1_mode, :block1_preferred_block_size]
   @message_id_modulus 65_536
 
-  defstruct [:handler, :message_id_counter, :socket, connection_opts: []]
+  defstruct [:handler, :message_id_counter, :socket, :transport, connection_opts: []]
 
   # ------------------------------------------- CLIENT ------------------------------------------- #
 
@@ -62,8 +63,9 @@ defmodule Macrina.Endpoint do
   def init(args) do
     handler = Keyword.fetch!(args, :handler)
     port = Keyword.fetch!(args, :port)
+    transport = Keyword.get(args, :transport, Transport.UDP)
 
-    case :gen_udp.open(port, [:binary, {:active, true}, {:reuseaddr, true}]) do
+    case transport.open(port: port, active: true) do
       {:ok, socket} ->
         Telemetry.execute([:endpoint, :start], %{system_time: System.system_time()}, %{port: port})
 
@@ -71,7 +73,8 @@ defmodule Macrina.Endpoint do
           connection_opts: Keyword.take(args, @connection_option_keys),
           handler: handler,
           message_id_counter: new_message_id_counter(),
-          socket: socket
+          socket: socket,
+          transport: transport
         }
 
         {:ok, state}
@@ -152,7 +155,8 @@ defmodule Macrina.Endpoint do
         ip: ip,
         message_id_counter: state.message_id_counter,
         port: port,
-        socket: socket
+        socket: socket,
+        transport: state.transport
       ]
       |> Keyword.merge(state.connection_opts)
 

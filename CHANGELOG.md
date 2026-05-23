@@ -35,6 +35,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `Macrina.Transport` — `@behaviour` for endpoint wire transports.
+  Callbacks: `open/1`, `send/3`, `close/1`. Active-mode sockets deliver
+  received datagrams to the controlling process as
+  `{:udp, socket, ip, port, packet}`; alternate transports must mimic
+  the shape.
+- `Macrina.Transport.UDP` — the only impl in 1.0, a thin shim over
+  `:gen_udp`. `Macrina.Endpoint.start_link/1` accepts a `:transport`
+  option (defaulting to `Macrina.Transport.UDP`) and threads the
+  module through to spawned `Macrina.Peer.Session` children via
+  `Macrina.Peer.State`. All previously direct `:gen_udp.send` calls in
+  `Macrina.Peer.Session` and `Macrina.Peer.State.reply/2` route
+  through `state.transport.send/3`. The seam is reserved for DTLS /
+  CoAP-over-TCP work post-1.0.
 - `Macrina.Peer.Block1Server` — pure Block1 (RFC 7959 §2.5) server-side
   ingest. `ingest/3` takes the Block1 policy, the exchange accumulator,
   and an incoming message and returns one of `:continue`, `:assembled`,

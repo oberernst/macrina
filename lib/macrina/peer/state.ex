@@ -19,7 +19,8 @@ defmodule Macrina.Peer.State do
             observe_subscriptions: %{},
             port: nil,
             retry_timers: %{},
-            socket: nil
+            socket: nil,
+            transport: Macrina.Transport.UDP
 
   @type t :: %__MODULE__{
           ack_timeout: non_neg_integer(),
@@ -35,7 +36,8 @@ defmodule Macrina.Peer.State do
           observe_subscriptions: ClientSession.t(),
           port: integer(),
           retry_timers: %{optional(binary()) => reference()},
-          socket: port()
+          socket: port(),
+          transport: module()
         }
 
   def complete_request(%__MODULE__{} = state, %Message{} = message) do
@@ -104,8 +106,9 @@ defmodule Macrina.Peer.State do
   end
 
   @spec reply(t(), binary()) :: :ok | {:error, term()}
-  def reply(%__MODULE__{ip: ip, port: port, socket: socket}, bin) when is_binary(bin) do
-    :gen_udp.send(socket, {ip, port}, bin)
+  def reply(%__MODULE__{transport: transport, ip: ip, port: port, socket: socket}, bin)
+      when is_binary(bin) do
+    transport.send(socket, {ip, port}, bin)
   end
 
   def reset_blocks(%__MODULE__{} = state) do
