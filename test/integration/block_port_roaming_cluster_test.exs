@@ -92,7 +92,9 @@ defmodule Macrina.Integration.BlockPortRoamingClusterTest do
     ack0 = recv(socket)
     assert ack0.code == :continue
 
-    transfer_pid = :global.whereis_name({Macrina.BlockTransfer, {127, 0, 0, 1}, token})
+    transfer_pid =
+      :global.whereis_name({Macrina.BlockTransfer, {127, 0, 0, 1}, ["upload"], [], token})
+
     assert is_pid(transfer_pid)
     assert node(transfer_pid) == Node.self()
 

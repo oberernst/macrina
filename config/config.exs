@@ -8,6 +8,7 @@ config :logger, :console,
   format: "$time [$level] $metadata$message\n",
   metadata: [
     :peer,
+    :op,
     :port,
     :block,
     :size,
