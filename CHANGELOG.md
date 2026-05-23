@@ -35,6 +35,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `Macrina.Peer.Block1Server` — pure Block1 (RFC 7959 §2.5) server-side
+  ingest. `ingest/3` takes the Block1 policy, the exchange accumulator,
+  and an incoming message and returns one of `:continue`, `:assembled`,
+  `:incomplete`, `:too_large`, or `:stream_chunk` alongside the next
+  exchange. `Macrina.Peer.Session` interprets the decision and drives
+  the I/O — handler invocation, UDP send, telemetry, dedup cache.
+  Direct unit tests live in `test/peer/block1_server_test.exs`;
+  `Peer.Session` shrinks from 1126 to 999 LOC as the inline Block1
+  helpers (`maybe_continue_block1_transfer`, `block1_transfer_too_large?`,
+  `stream_handler_result`, `block1_response_options`, etc.) move out
+  and consolidate behind `apply_block1_decision/3`.
 - `Macrina.Registry` — an Elixir `Registry` with unique keys, started by
   `Macrina.Application`, intended for `{endpoint_name, role}` lookups
   by `Macrina.Peer.Session`, `Macrina.BlockTransfer`, and any future

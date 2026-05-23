@@ -20,6 +20,7 @@ defmodule Macrina.Peer.Session do
     Observe,
     Observe.ClientSession,
     Observe.Subscription,
+    Peer.Block1Server,
     Peer.State,
     Request,
     Response,
@@ -238,19 +239,6 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  defp handle(%State{} = state, message, :continue) do
-    reply_opts = [code: :continue, options: block1_response_options(state, message), type: :ack]
-
-    case send_built_reply(state, message, reply_opts, %{stage: :continue}) do
-      {:ok, _reply, encoded_reply} ->
-        cache_reply(state, message, encoded_reply)
-
-      {:error, step, reason} ->
-        emit_reply_error(state, step, :continue, reason)
-        state
-    end
-  end
-
   defp next_packet_state({:ok, %Message{} = message}, state) do
     case handle_exchange_message(state, message) do
       {:handled, next_state} ->
@@ -272,24 +260,10 @@ defmodule Macrina.Peer.Session do
     state
   end
 
-  defp handle_packet_message(%Message{descriptive_block: %Block{more: true}} = message, state) do
-    case store_block(state, message) do
-      {:ok, next_state} ->
-        maybe_continue_block1_transfer(next_state, message)
-
-      {:error, _reason} ->
-        reply_incomplete_transfer(state, message)
-    end
-  end
-
-  defp handle_packet_message(%Message{descriptive_block: %Block{more: false}} = message, state) do
-    case store_block(state, message) do
-      {:ok, block_state} ->
-        maybe_complete_block1_transfer(block_state, message)
-
-      {:error, _reason} ->
-        reply_incomplete_transfer(state, message)
-    end
+  defp handle_packet_message(%Message{descriptive_block: %Block{}} = message, state) do
+    {decision, next_exchange} = Block1Server.ingest(state.block1, state.exchange, message)
+    state = State.put_exchange(state, next_exchange)
+    apply_block1_decision(state, message, decision)
   end
 
   defp handle_packet_message(%Message{type: type} = message, state) when type in [:ack, :rst] do
@@ -305,12 +279,46 @@ defmodule Macrina.Peer.Session do
     |> reply_to_client(message)
   end
 
-  defp completed_block_state(state, message, nil) do
-    emit_incomplete_transfer(state, message)
-    reply_incomplete_transfer(state, message)
+  defp apply_block1_decision(state, message, {:continue, response_block}) do
+    emit_block_continue(state, message)
+
+    reply_opts = [code: :continue, options: block1_options(response_block), type: :ack]
+
+    case send_built_reply(state, message, reply_opts, %{stage: :continue}) do
+      {:ok, _reply, encoded_reply} ->
+        state
+        |> cache_reply(message, encoded_reply)
+        |> reply_to_client(message)
+
+      {:error, step, reason} ->
+        emit_reply_error(state, step, :continue, reason)
+        reply_to_client(state, message)
+    end
   end
 
-  defp completed_block_state(state, message, payload) do
+  defp apply_block1_decision(state, message, {:too_large, response_block}) do
+    reply_opts = [
+      code: :request_entity_too_large,
+      options: block1_options(response_block),
+      type: :ack
+    ]
+
+    finalize_block1_reply(state, message, reply_opts, :too_large_transfer)
+  end
+
+  defp apply_block1_decision(state, message, {:incomplete, response_block}) do
+    emit_incomplete_transfer(state, message)
+
+    reply_opts = [
+      code: :request_entity_incomplete,
+      options: block1_options(response_block),
+      type: :ack
+    ]
+
+    finalize_block1_reply(state, message, reply_opts, :incomplete_transfer)
+  end
+
+  defp apply_block1_decision(state, message, {:assembled, payload, _response_block}) do
     full_message = %Message{message | payload: payload}
 
     execute_connection_event(
@@ -326,19 +334,23 @@ defmodule Macrina.Peer.Session do
     |> reply_to_client(full_message)
   end
 
-  defp reply_incomplete_transfer(state, message) do
-    reply_opts = [
-      code: :request_entity_incomplete,
-      options: block1_response_options(state, message),
-      type: :ack
-    ]
+  defp apply_block1_decision(state, message, {:stream_chunk, %Chunk{} = chunk, response_block}) do
+    case Handler.call(state.handler, state, chunk) do
+      nil when chunk.complete ->
+        state
+        |> reset_blocks(message)
+        |> reply_to_client(message)
 
-    case send_built_reply(
-           state,
-           message,
-           reply_opts,
-           %{stage: :incomplete_transfer}
-         ) do
+      nil ->
+        apply_block1_decision(state, message, {:continue, response_block})
+
+      %Message{} = reply ->
+        deliver_stream_reply(state, message, reply)
+    end
+  end
+
+  defp finalize_block1_reply(state, message, reply_opts, stage) do
+    case send_built_reply(state, message, reply_opts, %{stage: stage}) do
       {:ok, _reply, encoded_reply} ->
         state
         |> cache_reply(message, encoded_reply)
@@ -346,13 +358,35 @@ defmodule Macrina.Peer.Session do
         |> reply_to_client(message)
 
       {:error, step, reason} ->
-        emit_reply_error(state, step, :incomplete_transfer, reason)
+        emit_reply_error(state, step, stage, reason)
 
         state
         |> reset_blocks(message)
         |> reply_to_client(message)
     end
   end
+
+  defp deliver_stream_reply(state, message, %Message{} = reply) do
+    case encoded_reply(reply) do
+      {:ok, bin} ->
+        send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
+
+        state
+        |> cache_reply(message, bin)
+        |> reset_blocks(message)
+        |> reply_to_client(reply)
+
+      {:error, reason} ->
+        emit_reply_error(state, :encode, :handler, reason)
+
+        state
+        |> reset_blocks(message)
+        |> reply_to_client(message)
+    end
+  end
+
+  defp block1_options(nil), do: []
+  defp block1_options(%Block{} = block), do: [{"Block1", block}]
 
   defp resend_cached_reply(state, reply, message) do
     if reply do
@@ -635,168 +669,6 @@ defmodule Macrina.Peer.Session do
       error: reason,
       stage: stage
     })
-  end
-
-  defp maybe_continue_block1_transfer(
-         %State{block1: %Block1{mode: :streaming}} = state,
-         message
-       ) do
-    if block1_transfer_too_large?(state, message) do
-      reply_too_large_transfer(state, message)
-    else
-      stream_block1_chunk(state, message)
-    end
-  end
-
-  defp maybe_continue_block1_transfer(state, message) do
-    if block1_transfer_too_large?(state, message) do
-      reply_too_large_transfer(state, message)
-    else
-      emit_block_continue(state, message)
-
-      state
-      |> handle(message, :continue)
-      |> reply_to_client(message)
-    end
-  end
-
-  defp maybe_complete_block1_transfer(
-         %State{block1: %Block1{mode: :streaming}} = state,
-         message
-       ) do
-    if block1_transfer_too_large?(state, message) do
-      reply_too_large_transfer(state, message)
-    else
-      stream_block1_chunk(state, message)
-    end
-  end
-
-  defp maybe_complete_block1_transfer(state, message) do
-    if block1_transfer_too_large?(state, message) do
-      reply_too_large_transfer(state, message)
-    else
-      payload = read_blocks(state, message)
-      completed_block_state(state, message, payload)
-    end
-  end
-
-  defp block1_transfer_too_large?(
-         %State{block1: %Block1{max_body_size: :infinity}},
-         _message
-       ) do
-    false
-  end
-
-  defp block1_transfer_too_large?(
-         %State{block1: %Block1{max_body_size: limit}} = state,
-         message
-       )
-       when is_integer(limit) and limit >= 0 do
-    case block_transfer(state, message) do
-      {:ok, %{bytes: bytes}} -> bytes > limit
-      :error -> false
-    end
-  end
-
-  defp reply_too_large_transfer(state, message) do
-    reply_opts = [
-      code: :request_entity_too_large,
-      options: block1_response_options(state, message),
-      type: :ack
-    ]
-
-    case send_built_reply(state, message, reply_opts, %{stage: :too_large_transfer}) do
-      {:ok, _reply, encoded_reply} ->
-        state
-        |> cache_reply(message, encoded_reply)
-        |> reset_blocks(message)
-        |> reply_to_client(message)
-
-      {:error, step, reason} ->
-        emit_reply_error(state, step, :too_large_transfer, reason)
-
-        state
-        |> reset_blocks(message)
-        |> reply_to_client(message)
-    end
-  end
-
-  defp stream_block1_chunk(state, message) do
-    case block1_chunk(state, message) do
-      {:ok, chunk} ->
-        stream_handler_result(state, message, chunk, Handler.call(state.handler, state, chunk))
-
-      :error ->
-        reply_incomplete_transfer(state, message)
-    end
-  end
-
-  defp block1_chunk(state, message) do
-    case block_transfer(state, message) do
-      {:ok, transfer} -> {:ok, Chunk.from_message(message, transfer)}
-      :error -> :error
-    end
-  end
-
-  defp stream_handler_result(state, message, %Chunk{complete: false}, nil) do
-    emit_block_continue(state, message)
-
-    state
-    |> handle(message, :continue)
-    |> reply_to_client(message)
-  end
-
-  defp stream_handler_result(state, message, %Chunk{complete: true}, nil) do
-    state
-    |> reset_blocks(message)
-    |> reply_to_client(message)
-  end
-
-  defp stream_handler_result(state, message, _chunk, %Message{} = reply) do
-    case encoded_reply(reply) do
-      {:ok, bin} ->
-        send_reply(state, bin, %{code: reply.code, stage: :handler, type: reply.type})
-
-        next_state =
-          state
-          |> cache_reply(message, bin)
-          |> reset_blocks(message)
-
-        reply_to_client(next_state, reply)
-
-      {:error, reason} ->
-        emit_reply_error(state, :encode, :handler, reason)
-
-        state
-        |> reset_blocks(message)
-        |> reply_to_client(message)
-    end
-  end
-
-  defp block1_response_options(state, %Message{descriptive_block: %Block{} = block}) do
-    response_block = %Block{
-      number: block.number,
-      more: false,
-      size: block1_response_block_size(state, block)
-    }
-
-    [{"Block1", response_block}]
-  end
-
-  defp block1_response_options(_state, _message) do
-    []
-  end
-
-  defp block1_response_block_size(
-         %State{block1: %Block1{preferred_block_size: preferred_block_size}},
-         %Block{size: request_block_size}
-       )
-       when is_integer(preferred_block_size) and preferred_block_size > 0 do
-    min(preferred_block_size, request_block_size)
-  end
-
-  defp block1_response_block_size(_state, %Block{size: request_block_size}) do
-    request_block_size
   end
 
   defp send_built_reply(state, message, reply_opts, metadata) do

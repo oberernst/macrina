@@ -179,7 +179,7 @@ defmodule Macrina.Peer.State do
     put_exchange(state, next_exchange)
   end
 
-  defp put_exchange(%__MODULE__{} = state, %Exchange{} = exchange) do
+  def put_exchange(%__MODULE__{} = state, %Exchange{} = exchange) do
     %__MODULE__{state | exchange: exchange}
   end
 end
