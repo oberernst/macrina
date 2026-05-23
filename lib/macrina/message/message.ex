@@ -189,6 +189,28 @@ defmodule Macrina.Message do
   end
 
   @doc """
+  Header-only parse. Returns `{:ok, %{id, type, token}}` when the 4-byte
+  CoAP header plus token can be extracted, regardless of whether the
+  option bytes parse cleanly. Used by `Macrina.Peer.Session` to satisfy
+  RFC 7252 §4.2 — a malformed Confirmable message must still receive a
+  matching RST, and the matching id has to come from somewhere.
+  """
+  @spec decode_envelope(binary()) ::
+          {:ok, %{id: 0..0xFFFF, type: Types.t(), token: binary()}} | :error
+  def decode_envelope(
+        <<1::2, type::2, token_length::4, _code_class::3, _code_detail::5, id::16,
+          token::binary-size(token_length), _rest::binary>>
+      )
+      when token_length <= 8 do
+    case decode_type(type) do
+      {:ok, decoded_type} -> {:ok, %{id: id, type: decoded_type, token: token}}
+      {:error, _} -> :error
+    end
+  end
+
+  def decode_envelope(_binary), do: :error
+
+  @doc """
   Encode binary coap message
 
   Examples:

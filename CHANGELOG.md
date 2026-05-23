@@ -35,6 +35,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- RFC 9175 §3.2 — Request-Tag (option 292). Registered in
+  `Macrina.Message.Opts` and parsed/emitted by the codec like any
+  opaque option. `Macrina.Blockwise.transfer_identity/1` now prefers
+  Request-Tag as the body correlation key with Token as the fallback,
+  so two block uploads sharing a Token but bearing different
+  Request-Tags are treated as distinct bodies (matches NCS 2.9 and
+  other implementations that rotate Request-Tag per body).
+- RFC 7252 §4.2 — RST on malformed Confirmable. A new
+  `Macrina.Message.decode_envelope/1` extracts `{id, type, token}`
+  from the 4-byte CoAP header without parsing options, so when
+  `Macrina.Message.decode/1` rejects a packet the session can still
+  recover the matching id and send an empty RST when the original
+  type was `:con`. Telemetry now carries the decode `reason` in
+  `[:macrina, :connection, :decode, :error]`.
 - `Macrina.Transport` — `@behaviour` for endpoint wire transports.
   Callbacks: `open/1`, `send/3`, `close/1`. Active-mode sockets deliver
   received datagrams to the controlling process as

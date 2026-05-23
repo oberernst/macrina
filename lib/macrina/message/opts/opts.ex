@@ -26,7 +26,9 @@ defmodule Macrina.Message.Opts do
     {28, "Size2"},
     {35, "Proxy-Uri"},
     {39, "Proxy-Scheme"},
-    {60, "Size1"}
+    {60, "Size1"},
+    # RFC 9175 §3.2 — opaque request body correlation tag.
+    {292, "Request-Tag"}
   ]
 
   @number_to_name Map.new(@opts)

@@ -228,18 +228,36 @@ defmodule Macrina.Blockwise do
     :block2
   end
 
-  defp transfer_identity(%Message{token: token} = message) when byte_size(token) > 0 do
+  # RFC 9175 §3.2: a server uses Request-Tag (if present) as the body
+  # correlation key, with Token as the fallback. Same Token + different
+  # Request-Tag means two distinct upload bodies.
+  defp transfer_identity(%Message{} = message) do
+    case request_tag(message) do
+      {:ok, tag} -> {:request_tag, transfer_kind(message), tag}
+      :error -> token_or_request_identity(message)
+    end
+  end
+
+  defp token_or_request_identity(%Message{token: token} = message) when byte_size(token) > 0 do
     {:token, transfer_kind(message), token}
   end
 
-  defp transfer_identity(%Message{} = message) do
-    options = message.options || []
-
+  defp token_or_request_identity(%Message{} = message) do
     options =
-      Enum.reject(options, fn {name, _value} ->
+      (message.options || [])
+      |> Enum.reject(fn {name, _value} ->
         name in [@block1_option, @block2_option]
       end)
 
     {:request, message.code, options}
+  end
+
+  defp request_tag(%Message{options: nil}), do: :error
+
+  defp request_tag(%Message{options: options}) do
+    case List.keyfind(options, "Request-Tag", 0) do
+      {"Request-Tag", tag} when is_binary(tag) -> {:ok, tag}
+      _ -> :error
+    end
   end
 end

@@ -184,8 +184,7 @@ defmodule Macrina.Peer.Session do
   end
 
   def handle_info({:coap, packet}, %State{} = state) do
-    decoded = Message.decode(packet)
-    next_state = next_packet_state(decoded, state)
+    next_state = next_packet_state(Message.decode(packet), packet, state)
 
     {:noreply, next_state, @timeout}
   end
@@ -244,7 +243,7 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  defp next_packet_state({:ok, %Message{} = message}, state) do
+  defp next_packet_state({:ok, %Message{} = message}, _packet, state) do
     case handle_exchange_message(state, message) do
       {:handled, next_state} ->
         next_state
@@ -260,9 +259,26 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  defp next_packet_state(_decoded, state) do
-    execute_connection_event(state, [:decode, :error], %{count: 1}, %{})
-    state
+  # RFC 7252 §4.2: a malformed Confirmable message must be answered with
+  # a matching Reset. We recover the message id from the header and send
+  # an empty RST so the client stops retransmitting.
+  defp next_packet_state({:error, reason}, packet, state) do
+    execute_connection_event(state, [:decode, :error], %{count: 1}, %{reason: reason})
+
+    case Message.decode_envelope(packet) do
+      {:ok, %{type: :con, id: id}} -> reset_malformed_con(state, id)
+      _ -> state
+    end
+  end
+
+  defp reset_malformed_con(%State{} = state, id) do
+    with {:ok, rst} <- Message.build(:empty, id: id, type: :rst, token: <<>>),
+         {:ok, bin} <- Message.encode(rst) do
+      send_reply(state, bin, %{stage: :malformed_con_reset})
+      state
+    else
+      _other -> state
+    end
   end
 
   defp handle_packet_message(%Message{descriptive_block: %Block{}} = message, state) do
