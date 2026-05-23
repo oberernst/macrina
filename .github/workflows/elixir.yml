@@ -2,30 +2,44 @@ name: Elixir CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master, "1.0-dev"]
   pull_request:
-    branches: [ master ]
+    branches: [master, "1.0-dev"]
 
 jobs:
-  build:
-
-    name: Build and test
+  test:
+    name: Build, lint, test, dialyze
     runs-on: ubuntu-latest
 
+    env:
+      MIX_ENV: test
+
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Elixir
-      uses: erlef/setup-beam@v1
-      with:
-        version-file: '.tool-versions'
-        version-type: strict
-    - name: Restore dependencies cache
-      uses: actions/cache@v4
-      with:
-        path: deps
-        key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-        restore-keys: ${{ runner.os }}-mix-
-    - name: Install dependencies
-      run: mix deps.get
-    - name: Run tests
-      run: mix test
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: ".tool-versions"
+          version-type: strict
+
+      - name: Restore deps and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Restore dialyzer PLT cache
+        uses: actions/cache@v4
+        with:
+          path: priv/plts
+          key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
+
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix credo --strict
+      - run: mix test
+      - run: mix dialyzer

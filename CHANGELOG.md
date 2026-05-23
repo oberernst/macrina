@@ -35,6 +35,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `Macrina.Telemetry` `@moduledoc` now ships the full 1.0 event
+  catalogue — every `[:macrina, …]` event the library emits with its
+  measurements and metadata keys. Additions are non-breaking; renames
+  or removals will be called out in this file.
+- ADRs documenting the three 1.0 architectural commitments:
+  `docs/adr/0001-router-as-sole-dispatch.md`,
+  `docs/adr/0002-per-endpoint-registries.md`,
+  `docs/adr/0003-security-scope.md`.
+- `.github/workflows/elixir.yml` now runs the full pre-PR gate on
+  push and PR: `mix format --check-formatted`, `mix credo --strict`,
+  `mix test`, `mix dialyzer`. PLT cache keyed on `mix.lock`.
 - `test/message/codec_property_test.exs` — StreamData property tests
   pinning the two codec invariants we want to hold over an arbitrary
   input space: `encode → decode` preserves request semantics (code,
