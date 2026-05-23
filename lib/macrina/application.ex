@@ -17,7 +17,7 @@ defmodule Macrina.Application do
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Macrina.Supervisor]
     res = Supervisor.start_link(children, opts)
-    Logger.info("macrina started", result: inspect(res))
+    Logger.info("[Macrina] started", result: inspect(res))
     res
   end
 end

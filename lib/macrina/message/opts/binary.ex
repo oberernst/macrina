@@ -32,15 +32,21 @@ defmodule Macrina.Message.Opts.Binary do
 
   # ------------------------------------------- Decoder ------------------------------------------ #
 
-  @spec decode(message :: binary(), delta_sum :: integer(), [option()]) :: {[option], payload()}
+  @spec decode(message :: binary(), delta_sum :: integer(), [option()]) ::
+          {:ok, {[option], payload()}} | {:error, :malformed_payload_marker}
   def decode(binary, sum \\ 0, options \\ [])
 
   def decode(<<>>, _delta_sum, options) do
-    {options, <<>>}
+    {:ok, {options, <<>>}}
+  end
+
+  # RFC 7252 §3.1: a bare payload marker with no following bytes is a format error.
+  def decode(<<255>>, _delta_sum, _options) do
+    {:error, :malformed_payload_marker}
   end
 
   def decode(<<255, payload::binary>>, _delta_sum, options) do
-    {options, payload}
+    {:ok, {options, payload}}
   end
 
   def decode(<<delta::4, len::4, rest::binary>>, sum, options) do
