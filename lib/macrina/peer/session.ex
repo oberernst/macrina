@@ -68,16 +68,12 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  # Same friendly `:router`/`:context` → `:handler` tuple normalization as
-  # `Macrina.Endpoint`. Internal callers (`Macrina.Server` →
-  # `Macrina.Endpoint` → here) already pass the tuple; tests that bypass the
-  # public surface can use `:router` directly.
   defp normalize_router_opt(args) do
-    case {Keyword.get(args, :router), Keyword.get(args, :handler)} do
-      {nil, nil} ->
+    case Keyword.get(args, :router) do
+      nil ->
         {:error, {:missing_option, :router}}
 
-      {router, nil} when is_atom(router) ->
+      router when is_atom(router) ->
         context = Keyword.get(args, :context, %{})
 
         normalized =
@@ -88,14 +84,8 @@ defmodule Macrina.Peer.Session do
 
         {:ok, normalized}
 
-      {nil, {router, context}} when is_atom(router) and is_map(context) ->
-        {:ok, args}
-
-      {nil, _other} ->
-        {:error, {:invalid_handler, Keyword.get(args, :handler)}}
-
-      {_router, _handler} ->
-        {:error, {:conflicting_options, [:router, :handler]}}
+      other ->
+        {:error, {:invalid_router, other}}
     end
   end
 

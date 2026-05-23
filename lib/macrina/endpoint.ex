@@ -28,16 +28,12 @@ defmodule Macrina.Endpoint do
     end
   end
 
-  # Converts the friendlier `:router`/`:context` opts into the internal
-  # `:handler` tuple that the rest of the pipeline expects. `Macrina.Server`
-  # already builds the tuple itself; tests that hit `Endpoint.start_link/1`
-  # directly can use `:router` instead of constructing the tuple by hand.
   defp normalize_router_opt(args) do
-    case {Keyword.get(args, :router), Keyword.get(args, :handler)} do
-      {nil, nil} ->
+    case Keyword.get(args, :router) do
+      nil ->
         {:error, {:missing_option, :router}}
 
-      {router, nil} when is_atom(router) ->
+      router when is_atom(router) ->
         context = Keyword.get(args, :context, %{})
 
         normalized =
@@ -48,14 +44,8 @@ defmodule Macrina.Endpoint do
 
         {:ok, normalized}
 
-      {nil, {router, context}} when is_atom(router) and is_map(context) ->
-        {:ok, args}
-
-      {nil, _other} ->
-        {:error, {:invalid_handler, Keyword.get(args, :handler)}}
-
-      {_router, _handler} ->
-        {:error, {:conflicting_options, [:router, :handler]}}
+      other ->
+        {:error, {:invalid_router, other}}
     end
   end
 
@@ -152,11 +142,13 @@ defmodule Macrina.Endpoint do
 
   def handle_info({:udp, socket, ip, port, packet}, state) do
     conn_name = Macrina.Peer.label(ip, port)
+    {router, context} = state.handler
 
     child_args =
       [
         endpoint: self(),
-        handler: state.handler,
+        router: router,
+        context: context,
         ip: ip,
         message_id_counter: state.message_id_counter,
         port: port,

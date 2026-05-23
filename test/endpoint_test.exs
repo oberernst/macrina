@@ -128,7 +128,11 @@ defmodule Macrina.EndpointTest do
 
   test "public endpoint rejects streaming block1 mode for routers without a block1/2 callback" do
     assert {:error, {:invalid_block1, :streaming_requires_block1_callback}} =
-             Endpoint.start_link(router: __MODULE__.NilRouter, port: 0, block1: [mode: :streaming])
+             Endpoint.start_link(
+               router: __MODULE__.NilRouter,
+               port: 0,
+               block1: [mode: :streaming]
+             )
   end
 
   describe "next_message_id/1" do

@@ -97,19 +97,8 @@ defmodule Macrina.Server do
 
   defp build_endpoint_opts(opts) do
     case Keyword.get(opts, :router) do
-      nil ->
-        {:error, {:missing_option, :router}}
-
-      router when is_atom(router) ->
-        context = Keyword.get(opts, :context, %{})
-
-        endpoint_opts =
-          opts
-          |> Keyword.put(:handler, {router, context})
-          |> Keyword.delete(:router)
-          |> Keyword.delete(:context)
-
-        {:ok, endpoint_opts}
+      nil -> {:error, {:missing_option, :router}}
+      router when is_atom(router) -> {:ok, opts}
     end
   end
 

@@ -43,7 +43,7 @@ defmodule Macrina.InteropPublicApiTest do
     endpoint_name = {:global, {:interop_client_endpoint, make_ref()}}
 
     {:ok, endpoint} =
-      Endpoint.start_link(handler: ClientEndpointHandler, port: 0, name: endpoint_name)
+      Endpoint.start_link(router: ClientEndpointRouter, port: 0, name: endpoint_name)
 
     {:ok, client} = Client.connect(ip: {127, 0, 0, 1}, port: server_port, endpoint: endpoint_name)
 

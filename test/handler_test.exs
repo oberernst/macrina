@@ -12,13 +12,6 @@ defmodule Macrina.HandlerTest do
     Response
   }
 
-  defmodule ChunkHandler do
-    def call(_connection, %Chunk{} = chunk) do
-      send(self(), {:chunk, chunk.complete, chunk.bytes, chunk.message.payload})
-      nil
-    end
-  end
-
   defmodule InvalidRouter do
     @behaviour Macrina.Router
 
@@ -69,26 +62,10 @@ defmodule Macrina.HandlerTest do
     connection = %State{ip: {127, 0, 0, 1}, port: 5683}
     request = Message.build!(:get, id: 12, token: <<1, 2, 3, 4>>, type: :con)
 
-    reply = Handler.call({:router, InvalidRouter, %{}}, connection, request)
+    reply = Handler.call({InvalidRouter, %{}}, connection, request)
 
     assert %Message{code: :internal_server_error, id: 12, token: <<1, 2, 3, 4>>, type: :ack} =
              reply
-  end
-
-  test "module handlers receive block1 streaming chunks" do
-    connection = %State{}
-    request = Message.build!(:put, id: 1, token: <<1>>, type: :con)
-
-    chunk = %Chunk{
-      block: %Block{number: 0, more: true, size: 64},
-      bytes: 64,
-      complete: false,
-      content_format: 0,
-      message: %Message{request | payload: "data"}
-    }
-
-    assert nil == Handler.call(ChunkHandler, connection, chunk)
-    assert_receive {:chunk, false, 64, "data"}
   end
 
   test "router handlers receive block1 streaming chunks through the router callback" do
@@ -103,7 +80,7 @@ defmodule Macrina.HandlerTest do
       message: %Message{request | payload: "tail"}
     }
 
-    reply = Handler.call({:router, StreamingRouter, %{}}, connection, chunk)
+    reply = Handler.call({StreamingRouter, %{}}, connection, chunk)
 
     assert_receive {:router_chunk, true, 68, "tail"}
     assert %Message{code: :changed, id: 13, token: <<1, 2, 3, 5>>, type: :ack} = reply
@@ -120,7 +97,7 @@ defmodule Macrina.HandlerTest do
         type: :con
       )
 
-    reply = Handler.call({:router, DiscoverableRouter, %{}}, connection, request)
+    reply = Handler.call({DiscoverableRouter, %{}}, connection, request)
 
     assert_receive {:router_discover, [".well-known", "core"], :application_link_format}
     refute_receive {:router_call, _path}

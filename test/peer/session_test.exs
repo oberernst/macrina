@@ -1,17 +1,23 @@
 defmodule Macrina.Peer.SessionTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{Block1.Chunk, Message, Message.Opts.Block, Peer.Session}
+  alias Macrina.{Block1.Chunk, Message, Message.Opts.Block, Peer.Session, Response}
 
-  defmodule CountingHandler do
-    def call(_connection, message) do
+  defmodule CountingRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context) do
       Agent.update(__MODULE__, &(&1 + 1))
-      Message.response!(message, code: :content, payload: "ok", type: :ack)
+      Response.new(:content, payload: "ok")
     end
   end
 
-  defmodule NilCountingHandler do
-    def call(_connection, _message) do
+  defmodule NilCountingRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context) do
       Agent.update(__MODULE__, &(&1 + 1))
       nil
     end
@@ -21,31 +27,32 @@ defmodule Macrina.Peer.SessionTest do
     send(pid, {event, measurements, metadata})
   end
 
-  defmodule TestHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule TestRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
-  defmodule StreamingHandler do
-    def call(_connection, %Chunk{} = chunk) do
+  defmodule StreamingRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
+
+    @impl true
+    def block1(%Chunk{} = chunk, _context) do
       pid = :persistent_term.get({__MODULE__, :test_pid})
       send(pid, {:stream_chunk, chunk.complete, chunk.bytes, chunk.message.payload})
 
       if chunk.complete do
-        Message.response!(chunk.message, code: :changed, type: :ack)
-      else
-        nil
+        Response.new(:changed)
       end
-    end
-
-    def call(_connection, _message) do
-      nil
     end
   end
 
   test "start_link returns a missing option error" do
-    assert {:error, {:missing_option, :handler}} = Session.start_link([])
+    assert {:error, {:missing_option, :router}} = Session.start_link([])
   end
 
   test "start_link returns a running server when required options are present" do
@@ -67,7 +74,7 @@ defmodule Macrina.Peer.SessionTest do
 
     assert {:ok, pid} =
              Session.start_link(
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                port: 5683,
                socket: socket,
@@ -106,7 +113,7 @@ defmodule Macrina.Peer.SessionTest do
 
     assert {:ok, pid} =
              Session.start_link(
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                port: 5683,
                socket: socket,
@@ -139,7 +146,7 @@ defmodule Macrina.Peer.SessionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    {:ok, counter} = Agent.start_link(fn -> 0 end, name: CountingHandler)
+    {:ok, counter} = Agent.start_link(fn -> 0 end, name: CountingRouter)
 
     on_exit(fn ->
       if Process.alive?(counter) do
@@ -155,7 +162,7 @@ defmodule Macrina.Peer.SessionTest do
 
     assert {:ok, pid} =
              Session.start_link(
-               handler: CountingHandler,
+               router: CountingRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -177,7 +184,7 @@ defmodule Macrina.Peer.SessionTest do
     assert reply_message.payload == "ok"
     assert reply_message.type == :ack
 
-    assert Agent.get(CountingHandler, & &1) == 1
+    assert Agent.get(CountingRouter, & &1) == 1
 
     assert_receive {[:macrina, :exchange, :dedup, :hit], %{count: 1},
                     %{cached: true, code: :get, id: 333, ip: {127, 0, 0, 1}, peer: _, port: _}}
@@ -201,7 +208,7 @@ defmodule Macrina.Peer.SessionTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    {:ok, counter} = Agent.start_link(fn -> 0 end, name: NilCountingHandler)
+    {:ok, counter} = Agent.start_link(fn -> 0 end, name: NilCountingRouter)
 
     on_exit(fn ->
       if Process.alive?(counter) do
@@ -216,7 +223,7 @@ defmodule Macrina.Peer.SessionTest do
 
     assert {:ok, pid} =
              Session.start_link(
-               handler: NilCountingHandler,
+               router: NilCountingRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -230,7 +237,7 @@ defmodule Macrina.Peer.SessionTest do
     send(pid, {:coap, packet})
 
     assert {:error, :timeout} = :gen_udp.recv(recv_socket, 0, 80)
-    assert Agent.get(NilCountingHandler, & &1) == 1
+    assert Agent.get(NilCountingRouter, & &1) == 1
 
     assert_receive {[:macrina, :exchange, :dedup, :hit], %{count: 1},
                     %{cached: false, code: :get, id: 335, ip: {127, 0, 0, 1}, peer: _, port: _}}
@@ -241,7 +248,7 @@ defmodule Macrina.Peer.SessionTest do
   end
 
   test "duplicate confirmable requests after exchange lifetime are treated as new" do
-    {:ok, counter} = Agent.start_link(fn -> 0 end, name: CountingHandler)
+    {:ok, counter} = Agent.start_link(fn -> 0 end, name: CountingRouter)
 
     on_exit(fn ->
       if Process.alive?(counter) do
@@ -257,7 +264,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                exchange_lifetime: 30,
-               handler: CountingHandler,
+               router: CountingRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -275,7 +282,7 @@ defmodule Macrina.Peer.SessionTest do
     send(pid, {:coap, packet})
     assert {:ok, {_ip, _port, _second_reply}} = :gen_udp.recv(recv_socket, 0, 200)
 
-    assert Agent.get(CountingHandler, & &1) == 2
+    assert Agent.get(CountingRouter, & &1) == 2
 
     GenServer.stop(pid)
     :gen_udp.close(send_socket)
@@ -304,7 +311,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                ack_timeout: 20,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                max_retransmit: 2,
                port: recv_port,
@@ -364,7 +371,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                ack_timeout: 100,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                max_retransmit: 2,
                port: recv_port,
@@ -412,7 +419,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                ack_timeout: 100,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                max_retransmit: 2,
                port: recv_port,
@@ -467,7 +474,7 @@ defmodule Macrina.Peer.SessionTest do
              Session.start_link(
                ack_timeout: 100,
                exchange_lifetime: 50,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                max_retransmit: 2,
                port: recv_port,
@@ -511,7 +518,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                ack_timeout: 100,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                max_retransmit: 2,
                port: recv_port,
@@ -545,7 +552,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                block1_preferred_block_size: 32,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -587,7 +594,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                block1_max_body_size: 64,
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -642,7 +649,7 @@ defmodule Macrina.Peer.SessionTest do
 
     assert {:ok, pid} =
              Session.start_link(
-               handler: TestHandler,
+               router: TestRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,
@@ -687,10 +694,10 @@ defmodule Macrina.Peer.SessionTest do
   end
 
   test "streaming block1 mode delivers chunks before upload completion" do
-    :persistent_term.put({StreamingHandler, :test_pid}, self())
+    :persistent_term.put({StreamingRouter, :test_pid}, self())
 
     on_exit(fn ->
-      :persistent_term.erase({StreamingHandler, :test_pid})
+      :persistent_term.erase({StreamingRouter, :test_pid})
     end)
 
     {:ok, send_socket} = :gen_udp.open(0, [:binary, {:active, false}])
@@ -701,7 +708,7 @@ defmodule Macrina.Peer.SessionTest do
     assert {:ok, pid} =
              Session.start_link(
                block1_mode: :streaming,
-               handler: StreamingHandler,
+               router: StreamingRouter,
                ip: {127, 0, 0, 1},
                port: recv_port,
                socket: send_socket,

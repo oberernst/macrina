@@ -8,6 +8,30 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `Macrina.Server.start_link/1`, `Macrina.Endpoint.start_link/1`, and
+  `Macrina.Peer.Session.start_link/1` accept only `:router` (with optional
+  `:context`). The legacy `:handler` keyword that took a bare module or a
+  raw `{router, context}` tuple has been removed; `Macrina.Router` is the
+  single dispatch contract. Internal callers were updated to pass
+  `:router` + `:context` through to the session.
+
+### Added
+
+- `Macrina.Blocks` — pure block-payload accumulator. Stores blocks keyed
+  by number, reads them back as a contiguous binary, and reports the first
+  missing block on a gap. Used by `Macrina.BlockTransfer` for Block1
+  upload reassembly.
+- `Macrina.BlockTransfer` — per-`{ip, token}` GenServer for Block1 upload
+  assembly with a separate assembling/complete phase, completion caching
+  for retransmits, and `:global` registration so a peer can roam UDP
+  source ports without losing the transfer. `Macrina.BlockTransfer.Supervisor`
+  added to the application supervision tree.
+- `config/config.exs` — Logger console formatter with a metadata
+  allowlist matching the `[Category] message + metadata kw list` log
+  convention used by `Macrina.BlockTransfer`.
+
+### Changed
+
 - Per-endpoint atomic message-id counter. `Macrina.Endpoint` now owns
   an `:atomics` ref seeded at endpoint start; `Macrina.Peer.Session` reads it
   via `Macrina.Endpoint.next_message_id/1` (a pure ref-based helper —

@@ -3,10 +3,11 @@ defmodule Macrina.ClientTest do
 
   alias Macrina.{Client, Endpoint, Message, Message.Opts.Block, Request, Response}
 
-  defmodule TestHandler do
-    def call(_connection, _message) do
-      nil
-    end
+  defmodule TestRouter do
+    @behaviour Macrina.Router
+
+    @impl true
+    def call(_request, _context), do: nil
   end
 
   test "client request reassembles block2 responses" do
@@ -18,7 +19,7 @@ defmodule Macrina.ClientTest do
     server = spawn_link(fn -> block2_server_loop(server_socket, payload, test_pid) end)
 
     endpoint_name = {:global, {:client_test_endpoint, make_ref()}}
-    {:ok, endpoint} = Endpoint.start_link(handler: TestHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint} = Endpoint.start_link(router: TestRouter, port: 0, name: endpoint_name)
     {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
 
     on_exit(fn ->
@@ -56,7 +57,7 @@ defmodule Macrina.ClientTest do
     server = spawn_link(fn -> block2_server_loop(server_socket, payload, test_pid) end)
 
     endpoint_name = {:global, {:client_test_endpoint, make_ref()}}
-    {:ok, endpoint} = Endpoint.start_link(handler: TestHandler, port: 0, name: endpoint_name)
+    {:ok, endpoint} = Endpoint.start_link(router: TestRouter, port: 0, name: endpoint_name)
     {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
 
     on_exit(fn ->

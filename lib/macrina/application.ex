@@ -8,7 +8,8 @@ defmodule Macrina.Application do
   def start(_type, _args) do
     children = [
       {Macrina.Observe, []},
-      {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one},
+      Macrina.BlockTransfer.Supervisor
     ]
 
     opts = [strategy: :one_for_one, name: Macrina.Supervisor]

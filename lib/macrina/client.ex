@@ -364,9 +364,10 @@ defmodule Macrina.Client do
     end
   end
 
-  defp start_connection(handler, ip, port, socket, message_id_counter) do
+  defp start_connection({router, context}, ip, port, socket, message_id_counter) do
     args = [
-      handler: handler,
+      router: router,
+      context: context,
       ip: ip,
       message_id_counter: message_id_counter,
       port: port,
