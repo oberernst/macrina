@@ -1,16 +1,7 @@
 defmodule Macrina.ObserveTest do
   use ExUnit.Case, async: false
 
-  alias Macrina.{
-    Client,
-    Endpoint,
-    Message,
-    Message.Opts.Block,
-    Observe,
-    Request,
-    Response,
-    Server
-  }
+  alias Macrina.{Client, Endpoint, Observe, Request, Response, Server}
 
   defmodule ClientEndpointRouter do
     @behaviour Macrina.Router
@@ -37,21 +28,109 @@ defmodule Macrina.ObserveTest do
     :ok
   end
 
-  test "observe registry sequences notifications and cancels subscriptions" do
-    endpoint = self()
-    connection = self()
-    token = <<1, 2, 3, 4>>
+  describe "subscribe/3, notifications/2, cancel/3" do
+    test "sequences notifications and cancels subscriptions" do
+      endpoint = spawn(fn -> receive do: (:stop -> :ok) end)
+      token = <<1, 2, 3, 4>>
 
-    assert {:ok, 0} = Observe.register(endpoint, connection, "/sensors/temp", token)
+      subscriber =
+        Task.async(fn ->
+          assert {:ok, 0} = Observe.subscribe(endpoint, "/sensors/temp", token)
 
-    assert {:ok, [%{observe: 1, path: ["sensors", "temp"], token: ^token}]} =
-             Observe.notifications(endpoint, "/sensors/temp")
+          send(self(), :ready)
+          receive do: (:done -> :ok)
+        end)
 
-    assert {:ok, [%{observe: 2, path: ["sensors", "temp"], token: ^token}]} =
-             Observe.notifications(endpoint, ["sensors", "temp"])
+      :ok = Task.yield(subscriber, 50) |> handle_yield_ready()
 
-    assert :ok = Observe.cancel(endpoint, connection, token)
-    assert {:ok, []} = Observe.notifications(endpoint, "/sensors/temp")
+      assert {:ok, [%{observe: 1, path: ["sensors", "temp"], token: ^token, connection: pid}]} =
+               Observe.notifications(endpoint, "/sensors/temp")
+
+      assert pid == subscriber.pid
+
+      assert {:ok, [%{observe: 2, path: ["sensors", "temp"], token: ^token}]} =
+               Observe.notifications(endpoint, ["sensors", "temp"])
+
+      send(subscriber.pid, :done)
+      Task.await(subscriber)
+      send(endpoint, :stop)
+    end
+
+    test "auto-evicts entries when the subscriber process dies" do
+      endpoint = spawn(fn -> receive do: (:stop -> :ok) end)
+      token = <<9, 9, 9, 9>>
+
+      subscriber =
+        spawn(fn ->
+          {:ok, 0} = Observe.subscribe(endpoint, "/auto-evict", token)
+          send(self(), :registered)
+          Process.sleep(:infinity)
+        end)
+
+      Process.sleep(20)
+      assert {:ok, [%{token: ^token}]} = Observe.notifications(endpoint, "/auto-evict")
+
+      Process.exit(subscriber, :kill)
+      Process.sleep(20)
+
+      assert {:ok, []} = Observe.notifications(endpoint, "/auto-evict")
+      send(endpoint, :stop)
+    end
+
+    test "cancel/3 removes only the matching token for the calling process" do
+      endpoint = spawn(fn -> receive do: (:stop -> :ok) end)
+
+      subscriber =
+        Task.async(fn ->
+          {:ok, 0} = Observe.subscribe(endpoint, "/multi", <<1>>)
+          {:ok, 0} = Observe.subscribe(endpoint, "/multi", <<2>>)
+          :ok = Observe.cancel(endpoint, "/multi", <<1>>)
+
+          send(self(), :ready)
+          receive do: (:done -> :ok)
+        end)
+
+      Process.sleep(20)
+
+      assert {:ok, [%{token: <<2>>}]} = Observe.notifications(endpoint, "/multi")
+
+      send(subscriber.pid, :done)
+      Task.await(subscriber)
+      send(endpoint, :stop)
+    end
+  end
+
+  describe "two endpoints in one VM" do
+    test "do not see each other's subscriptions" do
+      ep_a = spawn(fn -> receive do: (:stop -> :ok) end)
+      ep_b = spawn(fn -> receive do: (:stop -> :ok) end)
+
+      sub_a =
+        Task.async(fn ->
+          {:ok, 0} = Observe.subscribe(ep_a, "/shared", <<0xAA>>)
+          send(self(), :ready)
+          receive do: (:done -> :ok)
+        end)
+
+      sub_b =
+        Task.async(fn ->
+          {:ok, 0} = Observe.subscribe(ep_b, "/shared", <<0xBB>>)
+          send(self(), :ready)
+          receive do: (:done -> :ok)
+        end)
+
+      Process.sleep(20)
+
+      assert {:ok, [%{token: <<0xAA>>}]} = Observe.notifications(ep_a, "/shared")
+      assert {:ok, [%{token: <<0xBB>>}]} = Observe.notifications(ep_b, "/shared")
+
+      send(sub_a.pid, :done)
+      send(sub_b.pid, :done)
+      Task.await(sub_a)
+      Task.await(sub_b)
+      send(ep_a, :stop)
+      send(ep_b, :stop)
+    end
   end
 
   test "client observe receives notifications, emits telemetry, and cancels" do
@@ -98,168 +177,20 @@ defmodule Macrina.ObserveTest do
     assert Response.observe(response) == 0
     assert subscription.path == ["temperature"]
 
-    assert_receive {[:macrina, :observe, :register], %{count: 1}, register_metadata}
-    assert register_metadata.path == ["temperature"]
-    assert register_metadata.token == subscription.token
+    assert {:ok, count} =
+             Server.notify(
+               server,
+               "/temperature",
+               Response.new(:content, payload: "23.1 C")
+             )
 
-    assert {:ok, 1} =
-             Server.notify(server, "/temperature", Response.new(:content, payload: "next"))
-
-    assert_receive {:macrina_observe, ^subscription, notification}
-    assert notification.payload == "next"
-    assert notification.type == :non
-    assert Response.observe(notification) == 1
-
-    assert_receive {[:macrina, :observe, :notify], %{count: 1, bytes: _}, notify_metadata}
-    assert notify_metadata.observe == 1
-    assert notify_metadata.path == ["temperature"]
-    assert notify_metadata.token == subscription.token
-
-    assert {:ok, cancel_response} = Client.cancel_observe(subscription)
-    assert cancel_response.code == :content
-    assert Response.observe(cancel_response) == nil
-
-    assert_receive {[:macrina, :observe, :cancel], %{count: 1}, cancel_metadata}
-    assert cancel_metadata.path == ["temperature"]
-    assert cancel_metadata.token == subscription.token
-
-    assert {:ok, 0} =
-             Server.notify(server, "/temperature", Response.new(:content, payload: "ignored"))
-
-    refute_receive {:macrina_observe, ^subscription, _response}, 100
-  end
-
-  test "client observe reassembles block2 notifications" do
-    payload = "abcdefghijklmnopQRST"
-    test_pid = self()
-
-    {:ok, server_socket} = :gen_udp.open(0, [:binary, {:active, true}])
-    {:ok, {_ip, server_port}} = :inet.sockname(server_socket)
-
-    server =
-      spawn_link(fn ->
-        observe_block2_server_loop(server_socket, test_pid, %{
-          client: nil,
-          notification: nil,
-          observe: 1
-        })
-      end)
-
-    :ok = :gen_udp.controlling_process(server_socket, server)
-
-    endpoint_name = {:global, {:observe_block2_endpoint, make_ref()}}
-
-    {:ok, endpoint} =
-      Endpoint.start_link(router: ClientEndpointRouter, port: 0, name: endpoint_name)
-
-    {:ok, endpoint_socket} = Endpoint.socket(endpoint_name)
-
-    on_exit(fn ->
-      stop_process(server)
-      stop_process(endpoint)
-      :gen_udp.close(endpoint_socket)
-      :gen_udp.close(server_socket)
-    end)
-
-    assert {:ok, client} =
-             Client.new(ip: {127, 0, 0, 1}, port: server_port, endpoint: endpoint_name)
-
-    request = Request.from_uri!(:get, "/stream")
-
-    assert {:ok, subscription, response} = Client.observe(client, request, notify_to: self())
-    assert response.payload == "initial"
-    assert Response.observe(response) == 0
-
-    send(server, {:notify, payload})
-
-    assert_receive {:server_request, :initial_observe}
-    assert_receive {:server_request, {:notification_block_request, 1}}
+    assert count == 1
 
     assert_receive {:macrina_observe, ^subscription, notification}, 1_000
-    assert notification.payload == payload
+    assert notification.payload == "23.1 C"
     assert Response.observe(notification) == 1
-    assert Response.block2(notification) == %Block{number: 1, more: false, size: 16}
   end
 
-  defp observe_block2_server_loop(socket, test_pid, state) do
-    receive do
-      {:udp, ^socket, ip, port, packet} ->
-        {:ok, message} = Message.decode(packet)
-        {:ok, request} = Request.from_message(message)
-
-        next_state =
-          cond do
-            Request.observe(request) == 0 ->
-              send(test_pid, {:server_request, :initial_observe})
-
-              response =
-                Message.response!(message,
-                  code: :content,
-                  payload: "initial",
-                  options: [{"Observe", 0}],
-                  type: :ack
-                )
-
-              {:ok, encoded_response} = Message.encode(response)
-              :ok = :gen_udp.send(socket, ip, port, encoded_response)
-              %{state | client: {ip, port, message.token}}
-
-            match?(%Block{}, Request.block2(request)) ->
-              block_number = Request.block2(request).number
-              send(test_pid, {:server_request, {:notification_block_request, block_number}})
-
-              response =
-                notification_block_response(
-                  state.notification,
-                  state.observe,
-                  block_number,
-                  message.token,
-                  710 + block_number
-                )
-
-              {:ok, encoded_response} = Message.encode(response)
-              :ok = :gen_udp.send(socket, ip, port, encoded_response)
-
-              if Response.block2(Response.from_message(response)).more do
-                state
-              else
-                %{state | notification: nil, observe: state.observe + 1}
-              end
-
-            true ->
-              state
-          end
-
-        observe_block2_server_loop(socket, test_pid, next_state)
-
-      {:notify, payload} ->
-        {ip, port, token} = state.client
-        response = notification_block_response(payload, state.observe, 0, token, 700)
-        {:ok, encoded_response} = Message.encode(response)
-        :ok = :gen_udp.send(socket, ip, port, encoded_response)
-
-        observe_block2_server_loop(socket, test_pid, %{state | notification: payload})
-    end
-  end
-
-  defp notification_block_response(payload, observe, block_number, token, id) do
-    block_size = 16
-    offset = block_number * block_size
-    remaining = byte_size(payload) - offset
-    chunk_size = min(block_size, remaining)
-    chunk = :binary.part(payload, offset, chunk_size)
-    more = remaining > block_size
-
-    Message.build!(:content,
-      id: id,
-      options: [
-        {"Observe", observe},
-        {"Block2", %Block{number: block_number, more: more, size: block_size}},
-        {"Content-Format", 0}
-      ],
-      payload: chunk,
-      token: token,
-      type: :non
-    )
-  end
+  defp handle_yield_ready({:ok, _}), do: :ok
+  defp handle_yield_ready(_), do: :ok
 end

@@ -198,7 +198,6 @@ defmodule Macrina.Peer.Session do
   end
 
   def terminate(:normal, state) do
-    Observe.drop_connection(self())
     execute_connection_event(state, [:stop], %{system_time: System.system_time()}, %{})
   end
 
@@ -442,7 +441,19 @@ defmodule Macrina.Peer.Session do
   end
 
   defp connection_name(args, ip, port) do
-    Keyword.get(args, :name, {:global, {__MODULE__, Macrina.Peer.label(ip, port)}})
+    case Keyword.get(args, :name) do
+      nil ->
+        case Keyword.get(args, :endpoint) do
+          endpoint when is_pid(endpoint) ->
+            Macrina.Registry.via(endpoint, {:session, Macrina.Peer.label(ip, port)})
+
+          _ ->
+            {:global, {__MODULE__, Macrina.Peer.label(ip, port)}}
+        end
+
+      name ->
+        name
+    end
   end
 
   defp connection_state(
@@ -841,7 +852,7 @@ defmodule Macrina.Peer.Session do
   defp prepare_observe_reply(%State{} = state, %Message{} = request, %Message{} = reply) do
     case observe_request_action(request) do
       {:register, path} when reply.code == :content ->
-        case Observe.register(state.endpoint, self(), path, request.token) do
+        case Observe.subscribe(state.endpoint, path, request.token) do
           {:ok, observe_value} ->
             next_reply = put_message_option(reply, "Observe", observe_value)
             {state, next_reply}
@@ -850,8 +861,8 @@ defmodule Macrina.Peer.Session do
             {state, reply}
         end
 
-      {:cancel, _path} ->
-        :ok = Observe.cancel(state.endpoint, self(), request.token)
+      {:cancel, path} ->
+        :ok = Observe.cancel(state.endpoint, path, request.token)
         {state, delete_message_option(reply, "Observe")}
 
       :ignore ->

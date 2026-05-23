@@ -14,21 +14,56 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   raw `{router, context}` tuple has been removed; `Macrina.Router` is the
   single dispatch contract. Internal callers were updated to pass
   `:router` + `:context` through to the session.
+- `Macrina.Observe` is no longer a VM-singleton `GenServer`. State lives
+  in `Macrina.Observe.Registry`, an Elixir `Registry` with `:duplicate`
+  keys keyed by `{endpoint_pid, path}`. Subscriptions self-register from
+  the owning `Macrina.Peer.Session` process, so when the session exits
+  the Registry's pid monitor drops the subscription automatically — no
+  `drop_connection` book-keeping. The public API surface is now
+  `subscribe/3`, `cancel/3`, and `notifications/2`. Sequence numbers
+  live in per-subscription `:atomics` refs (lock-free bumps inside
+  `notifications/2`).
+- `Macrina.Peer.Session` registers under
+  `Macrina.Registry.via(endpoint_pid, {:session, peer_label})` instead
+  of `{:global, {Session, peer_label}}`. Two `Macrina.Endpoint`s talking
+  to the same peer in one BEAM no longer collide on the session name.
+- `Macrina.BlockTransfer` keys its registration on
+  `Macrina.Registry.via(endpoint_pid, {:block_transfer, ip, token})`
+  instead of `:global`. `handle_block/5` and `cache_completion/4` take
+  the endpoint pid as a leading argument; two endpoints with the same
+  `{ip, token}` get isolated transfers.
 
 ### Added
 
+- `Macrina.Registry` — an Elixir `Registry` with unique keys, started by
+  `Macrina.Application`, intended for `{endpoint_name, role}` lookups
+  by `Macrina.Peer.Session`, `Macrina.BlockTransfer`, and any future
+  per-endpoint process.
+- `Macrina.Observe.Registry` — a duplicate-keys `Registry` that backs
+  `Macrina.Observe`. Two-endpoint isolation tests pin the contract
+  (`test/observe_test.exs`, `test/block_transfer_test.exs`).
 - `Macrina.Blocks` — pure block-payload accumulator. Stores blocks keyed
   by number, reads them back as a contiguous binary, and reports the first
   missing block on a gap. Used by `Macrina.BlockTransfer` for Block1
   upload reassembly.
-- `Macrina.BlockTransfer` — per-`{ip, token}` GenServer for Block1 upload
-  assembly with a separate assembling/complete phase, completion caching
-  for retransmits, and `:global` registration so a peer can roam UDP
-  source ports without losing the transfer. `Macrina.BlockTransfer.Supervisor`
+- `Macrina.BlockTransfer` — per-`{endpoint, ip, token}` GenServer for
+  Block1 upload assembly with a separate assembling/complete phase,
+  completion caching for retransmits. `Macrina.BlockTransfer.Supervisor`
   added to the application supervision tree.
 - `config/config.exs` — Logger console formatter with a metadata
   allowlist matching the `[Category] message + metadata kw list` log
   convention used by `Macrina.BlockTransfer`.
+
+### Removed
+
+- The `Macrina.Observe` GenServer (`use GenServer`, the three-index
+  `subscriptions`/`paths`/`connections` state machine, the
+  `pop_subscription` / `delete_from_index` plumbing, and the dead-
+  connection eviction loop). All of it is replaced by a 121-LOC
+  Registry-backed module — the index is `Registry.lookup/2` and
+  eviction is `Registry`'s pid monitor.
+- `Macrina.Observe.drop_connection/1`. Session death drops subscriptions
+  automatically via the Registry's pid monitor.
 
 ### Changed
 

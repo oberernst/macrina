@@ -138,42 +138,74 @@ defmodule Macrina.BlockTransferTest do
     end
   end
 
-  describe "handle_block/4 with :global registration" do
+  describe "handle_block/5 via per-endpoint Registry" do
     setup do
+      endpoint = spawn(fn -> Process.sleep(:infinity) end)
       ip = {127, 0, 0, 1}
       token = :crypto.strong_rand_bytes(8)
 
       on_exit(fn ->
-        case :global.whereis_name({Macrina.BlockTransfer, ip, token}) do
-          :undefined -> :ok
+        case Macrina.Registry.whereis(endpoint, {:block_transfer, ip, token}) do
+          nil -> :ok
           pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal)
         end
+
+        if Process.alive?(endpoint), do: Process.exit(endpoint, :kill)
       end)
 
-      {:ok, ip: ip, token: token}
+      {:ok, endpoint: endpoint, ip: ip, token: token}
     end
 
-    test "starts a globally-registered process on first call", %{ip: ip, token: token} do
+    test "starts a Registry-keyed process on first call", %{
+      endpoint: endpoint,
+      ip: ip,
+      token: token
+    } do
       msg = block_msg(0, "aa", true, token)
 
-      assert {:continue, _} = BlockTransfer.handle_block(ip, token, NilHandler, msg)
+      assert {:continue, _} = BlockTransfer.handle_block(endpoint, ip, token, NilHandler, msg)
 
-      pid = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+      pid = Macrina.Registry.whereis(endpoint, {:block_transfer, ip, token})
       assert is_pid(pid)
     end
 
-    test "second call resolves the same pid", %{ip: ip, token: token} do
+    test "second call resolves the same pid", %{endpoint: endpoint, ip: ip, token: token} do
       msg0 = block_msg(0, "aa", true, token)
       msg1 = block_msg(1, "bb", false, token)
 
-      assert {:continue, _} = BlockTransfer.handle_block(ip, token, NilHandler, msg0)
-      pid_after_first = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+      assert {:continue, _} = BlockTransfer.handle_block(endpoint, ip, token, NilHandler, msg0)
+
+      pid_after_first = Macrina.Registry.whereis(endpoint, {:block_transfer, ip, token})
 
       assert {:assembled, %Message{payload: "aabb"}} =
-               BlockTransfer.handle_block(ip, token, NilHandler, msg1)
+               BlockTransfer.handle_block(endpoint, ip, token, NilHandler, msg1)
 
-      pid_after_second = :global.whereis_name({Macrina.BlockTransfer, ip, token})
+      pid_after_second = Macrina.Registry.whereis(endpoint, {:block_transfer, ip, token})
       assert pid_after_first == pid_after_second
+    end
+
+    test "two endpoints with the same {ip, token} have isolated transfers", %{
+      ip: ip,
+      token: token
+    } do
+      ep_a = spawn(fn -> Process.sleep(:infinity) end)
+      ep_b = spawn(fn -> Process.sleep(:infinity) end)
+
+      on_exit(fn ->
+        if Process.alive?(ep_a), do: Process.exit(ep_a, :kill)
+        if Process.alive?(ep_b), do: Process.exit(ep_b, :kill)
+      end)
+
+      msg = block_msg(0, "aa", true, token)
+
+      assert {:continue, _} = BlockTransfer.handle_block(ep_a, ip, token, NilHandler, msg)
+      assert {:continue, _} = BlockTransfer.handle_block(ep_b, ip, token, NilHandler, msg)
+
+      pid_a = Macrina.Registry.whereis(ep_a, {:block_transfer, ip, token})
+      pid_b = Macrina.Registry.whereis(ep_b, {:block_transfer, ip, token})
+
+      assert is_pid(pid_a) and is_pid(pid_b)
+      assert pid_a != pid_b
     end
   end
 end

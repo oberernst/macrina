@@ -96,9 +96,19 @@ defmodule Macrina.Client do
     with {:ok, socket} <- Endpoint.socket(endpoint),
          {:ok, handler} <- Endpoint.handler(endpoint),
          {:ok, counter} <- Endpoint.message_id_counter(endpoint),
-         {:ok, conn} <- start_connection(handler, ip, port, socket, counter) do
+         {:ok, endpoint_pid} <- resolve_endpoint_pid(endpoint),
+         {:ok, conn} <- start_connection(endpoint_pid, handler, ip, port, socket, counter) do
       client = %__MODULE__{conn: conn, ip: ip, port: port}
       {:ok, client}
+    end
+  end
+
+  defp resolve_endpoint_pid(endpoint) when is_pid(endpoint), do: {:ok, endpoint}
+
+  defp resolve_endpoint_pid(endpoint) do
+    case GenServer.whereis(endpoint) do
+      nil -> {:error, {:endpoint_unavailable, endpoint}}
+      pid -> {:ok, pid}
     end
   end
 
@@ -364,8 +374,9 @@ defmodule Macrina.Client do
     end
   end
 
-  defp start_connection({router, context}, ip, port, socket, message_id_counter) do
+  defp start_connection(endpoint_pid, {router, context}, ip, port, socket, message_id_counter) do
     args = [
+      endpoint: endpoint_pid,
       router: router,
       context: context,
       ip: ip,

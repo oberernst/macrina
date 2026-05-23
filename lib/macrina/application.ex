@@ -7,7 +7,8 @@ defmodule Macrina.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Macrina.Observe, []},
+      Macrina.Registry,
+      Macrina.Observe.Registry,
       {DynamicSupervisor, name: Macrina.ConnectionSupervisor, strategy: :one_for_one},
       Macrina.BlockTransfer.Supervisor
     ]

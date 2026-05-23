@@ -5,7 +5,7 @@ defmodule Macrina.BlockTransfer do
 
   require Logger
 
-  alias Macrina.{Blocks, Message}
+  alias Macrina.{Blocks, Message, Registry}
   alias Macrina.Message.Opts.Block
 
   @assembling_timeout :timer.minutes(5)
@@ -41,26 +41,32 @@ defmodule Macrina.BlockTransfer do
     GenServer.call(pid, {:block, message})
   end
 
-  @spec handle_block(:inet.ip_address(), binary(), module(), Message.t()) ::
+  @spec handle_block(pid(), :inet.ip_address(), binary(), module(), Message.t()) ::
           {:continue, binary()}
           | {:assembled, Message.t()}
           | {:incomplete, binary()}
           | {:duplicate, binary() | nil}
-  def handle_block(ip, token, handler, %Message{} = message) do
-    ip
-    |> lookup_or_start(token, handler)
+  def handle_block(endpoint, ip, token, handler, %Message{} = message)
+      when is_pid(endpoint) do
+    endpoint
+    |> lookup_or_start(ip, token, handler)
     |> handle_block(message)
   end
 
-  defp lookup_or_start(ip, token, handler) do
-    case :global.whereis_name({__MODULE__, ip, token}) do
+  defp lookup_or_start(endpoint, ip, token, handler) do
+    case Registry.whereis(endpoint, {:block_transfer, ip, token}) do
       pid when is_pid(pid) -> pid
-      :undefined -> start_under_supervisor(ip, token, handler)
+      nil -> start_under_supervisor(endpoint, ip, token, handler)
     end
   end
 
-  defp start_under_supervisor(ip, token, handler) do
-    args = [ip: ip, token: token, handler: handler, name: {:global, {__MODULE__, ip, token}}]
+  defp start_under_supervisor(endpoint, ip, token, handler) do
+    args = [
+      ip: ip,
+      token: token,
+      handler: handler,
+      name: Registry.via(endpoint, {:block_transfer, ip, token})
+    ]
 
     case DynamicSupervisor.start_child(Macrina.BlockTransfer.Supervisor, {__MODULE__, args}) do
       {:ok, pid} -> pid
@@ -73,10 +79,10 @@ defmodule Macrina.BlockTransfer do
     GenServer.call(pid, {:cache_completion, reply_bin})
   end
 
-  @spec cache_completion(:inet.ip_address(), binary(), binary() | nil) :: :ok
-  def cache_completion(ip, token, reply_bin) do
-    case :global.whereis_name({__MODULE__, ip, token}) do
-      :undefined -> :ok
+  @spec cache_completion(pid(), :inet.ip_address(), binary(), binary() | nil) :: :ok
+  def cache_completion(endpoint, ip, token, reply_bin) when is_pid(endpoint) do
+    case Registry.whereis(endpoint, {:block_transfer, ip, token}) do
+      nil -> :ok
       pid -> cache_completion(pid, reply_bin)
     end
   end
