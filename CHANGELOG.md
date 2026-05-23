@@ -35,6 +35,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `test/message/codec_property_test.exs` — StreamData property tests
+  pinning the two codec invariants we want to hold over an arbitrary
+  input space: `encode → decode` preserves request semantics (code,
+  id, token, type, payload, and option multiset), and
+  `encode → decode → encode` is a fixed point. Tagged `:property`;
+  runs by default.
 - RFC 9175 §3.2 — Request-Tag (option 292). Registered in
   `Macrina.Message.Opts` and parsed/emitted by the codec like any
   opaque option. `Macrina.Blockwise.transfer_identity/1` now prefers
