@@ -17,7 +17,8 @@ defmodule Macrina.Message.Opts do
     {28, "Size2"},
     {35, "Proxy-Uri"},
     {39, "Proxy-Scheme"},
-    {60, "Size1"}
+    {60, "Size1"},
+    {292, "Request-Tag"}
   ]
 
   def atom_name(number) do

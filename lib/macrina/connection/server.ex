@@ -127,7 +127,7 @@ defmodule Macrina.Connection.Server do
   end
 
   defp handle_block_message(%Connection{} = state, %Message{} = message) do
-    case BlockTransfer.handle_block(state.ip, message.token, state.handler, message) do
+    case BlockTransfer.handle_block(state.ip, state.port, state.handler, message) do
       {:continue, bin} -> reply_with(state, message, bin)
       {:incomplete, bin} -> reply_with(state, message, bin)
       {:duplicate, bin} -> reply_with(state, message, bin)
@@ -146,7 +146,7 @@ defmodule Macrina.Connection.Server do
 
   defp handle_assembled_block(state, full) do
     {state, reply_bin} = handle_and_capture(state, full)
-    BlockTransfer.cache_completion(state.ip, full.token, reply_bin)
+    BlockTransfer.cache_completion(state.ip, full, reply_bin)
     {:noreply, reply_to_client(state, full), @timeout}
   end
 end
