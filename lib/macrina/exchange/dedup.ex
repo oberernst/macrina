@@ -1,11 +1,9 @@
 defmodule Macrina.Exchange.Dedup do
   @moduledoc false
 
-  # Pure reply-cache helpers (RFC 7252 §4.5). A "reply" is whatever was sent
-  # back for a given CON message-id; caching it lets us re-send the same
-  # response when a duplicate request arrives, rather than running the
-  # handler twice. Operates over a `%{id => entry}` map owned by
-  # `Macrina.Exchange`.
+  # Pure reply-cache helpers (RFC 7252 §4.5). A reply is the data sent back
+  # for a CON message-id. A duplicate request gets the cached reply.
+  # Operates over a `%{id => entry}` map owned by `Macrina.Exchange`.
 
   @type entry :: %{reply: binary() | nil, stored_at: integer()}
   @type t :: %{optional(non_neg_integer()) => entry()}

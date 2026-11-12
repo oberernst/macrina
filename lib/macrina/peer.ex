@@ -2,8 +2,8 @@ defmodule Macrina.Peer do
   @moduledoc false
 
   # Small helpers that identify or label the remote endpoint of a CoAP
-  # exchange. Pure; no socket I/O. The effectful per-peer state machine lives
-  # in `Macrina.Peer.Session` (an alias added by Wave B's rename slice).
+  # exchange. Pure, with no socket I/O. The effectful per-peer state machine
+  # lives in `Macrina.Peer.Session`.
 
   @doc """
   Returns a human-readable label for a peer address.

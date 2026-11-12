@@ -2,8 +2,8 @@ defmodule Macrina.Discovery.Resource do
   @moduledoc """
   A single CoRE Link Format resource entry.
 
-  Represents one `<path>;attr=value` record in the `/.well-known/core`
-  response. Attributes follow the CoRE Link Format specification
+  Represents one record of the `/.well-known/core` response: a path plus
+  attribute key-value pairs. Attributes follow the CoRE Link Format specification
   (RFC 6690, Section 2).
   """
   @enforce_keys [:path]

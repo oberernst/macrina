@@ -73,8 +73,8 @@ defmodule Macrina.Server do
   @doc """
   Pushes a response to all clients observing `path` on `server`.
 
-  Returns `{:ok, count}` where `count` is the number of observers notified,
-  or `{:error, reason}` if the path cannot be resolved.
+  Returns `{:ok, count}` with the number of observers notified, or
+  `{:error, reason}` if the path fails to resolve.
   """
   def notify(server, path, %Response{} = response) do
     with {:ok, endpoint} <- resolve_endpoint(server),

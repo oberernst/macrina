@@ -3,9 +3,8 @@ defmodule Macrina.Message.Opts do
 
   # CoAP option number/name registry (RFC 7252 §5.10).
   #
-  # Wave C swapped the original `Enum.find/2` linear scan for compile-time
-  # maps. Lookups are now O(log n) on map size and the option list is closed:
-  # callers cannot register new options at runtime (none ever did).
+  # Lookups use compile-time maps in O(log n) on map size.
+  # The option list is closed at compile time.
 
   @opts [
     {1, "If-Match"},

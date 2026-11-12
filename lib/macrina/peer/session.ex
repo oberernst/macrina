@@ -29,9 +29,9 @@ defmodule Macrina.Peer.Session do
 
   import State, only: :functions
 
-  @call_timeout :timer.seconds(10)
-  @timeout :timer.minutes(5)
-  @default_ack_timeout 2_000
+  @call_timeout_ms :timer.seconds(10)
+  @timeout_ms :timer.minutes(5)
+  @default_ack_timeout_ms 2_000
   @default_exchange_lifetime 247_000
   @default_max_retransmit 4
   @request_codes Codes.method_codes()
@@ -44,7 +44,7 @@ defmodule Macrina.Peer.Session do
          {:ok, port} <- fetch_opt(args, :port),
          {:ok, socket} <- fetch_opt(args, :socket) do
       name = connection_name(args, ip, port)
-      ack_timeout = Keyword.get(args, :ack_timeout, @default_ack_timeout)
+      ack_timeout = Keyword.get(args, :ack_timeout, @default_ack_timeout_ms)
       endpoint = Keyword.get(args, :endpoint)
       exchange_lifetime = Keyword.get(args, :exchange_lifetime, @default_exchange_lifetime)
       max_retransmit = Keyword.get(args, :max_retransmit, @default_max_retransmit)
@@ -91,10 +91,9 @@ defmodule Macrina.Peer.Session do
     end
   end
 
-  # Per-endpoint atomic counter (Wave C). When spawned by `Macrina.Endpoint`
-  # we get the endpoint's shared counter; when spawned directly (tests, ad-hoc
-  # client setups), fall back to a fresh per-session counter so the session
-  # always has a stamping-source.
+  # Per-endpoint atomic counter. A session spawned by `Macrina.Endpoint`
+  # shares the endpoint's counter. A session spawned directly gets a fresh
+  # per-session counter.
   defp with_message_id_counter(%State{} = state, args) do
     counter = Keyword.get(args, :message_id_counter) || :atomics.new(1, signed: false)
     %State{state | message_id_counter: counter}
@@ -104,10 +103,9 @@ defmodule Macrina.Peer.Session do
     %State{state | transport: Keyword.get(args, :transport, Macrina.Transport.UDP)}
   end
 
-  # Overwrites a message's id with the next value from the per-endpoint
-  # counter. Used for outbound messages this session originates (observe
-  # block2 follow-ups, server-side observer notifications) — anywhere we
-  # would otherwise inherit `Macrina.Message.build/2`'s random fallback.
+  # Overwrites a message's id with the next per-endpoint counter value, for
+  # messages this session originates. Without stamping, these messages carry
+  # `Macrina.Message.build/2`'s random id fallback.
   defp stamp_message_id(%State{message_id_counter: ref}, %Message{} = message) do
     %Message{message | id: Endpoint.next_message_id(ref)}
   end
@@ -120,7 +118,7 @@ defmodule Macrina.Peer.Session do
     )
   end
 
-  def call(pid, message, timeout \\ @call_timeout) do
+  def call(pid, message, timeout \\ @call_timeout_ms) do
     GenServer.call(pid, {:request, message}, timeout)
   end
 
@@ -138,7 +136,7 @@ defmodule Macrina.Peer.Session do
 
   def init(state) do
     execute_connection_event(state, [:start], %{system_time: System.system_time()}, %{})
-    {:ok, state, @timeout}
+    {:ok, state, @timeout_ms}
   end
 
   def handle_call({:request, %Message{} = message}, from, %State{} = state) do
@@ -151,7 +149,7 @@ defmodule Macrina.Peer.Session do
           |> register_request(message, from)
           |> maybe_track_request(message, from, packet)
 
-        {:noreply, next_state, @timeout}
+        {:noreply, next_state, @timeout_ms}
 
       {:error, reason} ->
         execute_connection_event(state, [:request, :encode, :error], %{count: 1}, %{error: reason})
@@ -159,7 +157,7 @@ defmodule Macrina.Peer.Session do
         error = {:encode_failed, reason}
         GenServer.reply(from, {:error, error})
 
-        {:noreply, state, @timeout}
+        {:noreply, state, @timeout_ms}
     end
   end
 
@@ -169,24 +167,24 @@ defmodule Macrina.Peer.Session do
         %State{} = state
       ) do
     next_state = put_observe_subscription(state, subscription, observe_value)
-    {:reply, :ok, next_state, @timeout}
+    {:reply, :ok, next_state, @timeout_ms}
   end
 
   def handle_call({:observe_unsubscribe, token}, _from, %State{} = state)
       when is_binary(token) do
     next_state = drop_observe_subscription(state, token)
-    {:reply, :ok, next_state, @timeout}
+    {:reply, :ok, next_state, @timeout_ms}
   end
 
   def handle_cast({:observe_notify, notification, %Response{} = response}, %State{} = state) do
     next_state = send_observe_notification(state, notification, response)
-    {:noreply, next_state, @timeout}
+    {:noreply, next_state, @timeout_ms}
   end
 
   def handle_info({:coap, packet}, %State{} = state) do
     next_state = next_packet_state(Message.decode(packet), packet, state)
 
-    {:noreply, next_state, @timeout}
+    {:noreply, next_state, @timeout_ms}
   end
 
   def handle_info({:retransmit, token}, %State{} = state) do
@@ -195,7 +193,7 @@ defmodule Macrina.Peer.Session do
 
     final_state = handle_retry_action(action, next_state)
 
-    {:noreply, final_state, @timeout}
+    {:noreply, final_state, @timeout_ms}
   end
 
   def handle_info(:timeout, state) do

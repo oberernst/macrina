@@ -8,36 +8,54 @@ defmodule Macrina.Telemetry do
 
   ## Event catalogue (1.0)
 
-  | Event | Measurements | Metadata |
-  |---|---|---|
-  | `[:macrina, :app, :start]` | `system_time` | `result` |
-  | `[:macrina, :endpoint, :start]` | `system_time` | `port` |
-  | `[:macrina, :endpoint, :udp, :error]` | `count` | `reason` |
-  | `[:macrina, :endpoint, :packet, :received]` | `bytes` | `peer`, `ip`, `port` |
-  | `[:macrina, :endpoint, :connection, :start, :error]` | `count` | `error`, `peer` |
-  | `[:macrina, :connection, :start]` | `system_time` | `ip`, `peer`, `port` |
-  | `[:macrina, :connection, :stop]` | `system_time` | `ip`, `peer`, `port` |
-  | `[:macrina, :connection, :request, :encode, :error]` | `count` | `error`, `ip`, `peer`, `port` |
-  | `[:macrina, :connection, :reply, :skipped]` | `count` | `stage` |
-  | `[:macrina, :connection, :decode, :error]` | `count` | `reason` |
-  | `[:macrina, :connection, :block, :received]` | `block_number`, `block_size`, `bytes` | `more` |
-  | `[:macrina, :connection, :block, :assembled]` | `bytes`, `count` | `first_block`, `last_block` |
-  | `[:macrina, :connection, :block, :missing]` | `count` | `missing_block`, `received_blocks` |
-  | `[:macrina, :connection, :block, :completed]` | `bytes`, `count` | `code`, `type` |
-  | `[:macrina, :connection, :block, :continue]` | `count` | varies |
-  | `[:macrina, :connection, :incomplete_transfer]` | `count` | varies |
-  | `[:macrina, :exchange, :dedup, :hit]` | `count` | `cached`, `code`, `id`, `ip`, `peer`, `port` |
-  | `[:macrina, :exchange, :retransmit]` | `attempt`, `bytes`, `count` | `id`, `ip`, `peer`, `port`, `token` |
-  | `[:macrina, :exchange, :timeout]` | `count`, `retransmissions` | `id`, `ip`, `peer`, `port`, `token`, optionally `phase` |
-  | `[:macrina, :observe, :register]` | `count` | `path`, `token` |
-  | `[:macrina, :observe, :cancel]` | `count` | `path`, `token` |
+  - `[:macrina, :app, :start]`: measurements `system_time`, metadata `result`.
+
+  - `[:macrina, :endpoint, :start]`: measurements `system_time`, metadata `port`.
+
+  - `[:macrina, :endpoint, :udp, :error]`: measurements `count`, metadata `reason`.
+
+  - `[:macrina, :endpoint, :packet, :received]`: measurements `bytes`, metadata `peer`, `ip`, `port`.
+
+  - `[:macrina, :endpoint, :connection, :start, :error]`: measurements `count`, metadata `error`, `peer`.
+
+  - `[:macrina, :connection, :start]`: measurements `system_time`, metadata `ip`, `peer`, `port`.
+
+  - `[:macrina, :connection, :stop]`: measurements `system_time`, metadata `ip`, `peer`, `port`.
+
+  - `[:macrina, :connection, :request, :encode, :error]`: measurements `count`, metadata `error`, `ip`, `peer`, `port`.
+
+  - `[:macrina, :connection, :reply, :skipped]`: measurements `count`, metadata `stage`.
+
+  - `[:macrina, :connection, :decode, :error]`: measurements `count`, metadata `reason`.
+
+  - `[:macrina, :connection, :block, :received]`: measurements `block_number`, `block_size`, `bytes`, metadata `more`.
+
+  - `[:macrina, :connection, :block, :assembled]`: measurements `bytes`, `count`, metadata `first_block`, `last_block`.
+
+  - `[:macrina, :connection, :block, :missing]`: measurements `count`, metadata `missing_block`, `received_blocks`.
+
+  - `[:macrina, :connection, :block, :completed]`: measurements `bytes`, `count`, metadata `code`, `type`.
+
+  - `[:macrina, :connection, :block, :continue]`: measurements `count`, metadata varies.
+
+  - `[:macrina, :connection, :incomplete_transfer]`: measurements `count`, metadata varies.
+
+  - `[:macrina, :exchange, :dedup, :hit]`: measurements `count`, metadata `cached`, `code`, `id`, `ip`, `peer`, `port`.
+
+  - `[:macrina, :exchange, :retransmit]`: measurements `attempt`, `bytes`, `count`, metadata `id`, `ip`, `peer`, `port`, `token`.
+
+  - `[:macrina, :exchange, :timeout]`: measurements `count`, `retransmissions`, metadata `id`, `ip`, `peer`, `port`, `token`, optionally `phase`.
+
+  - `[:macrina, :observe, :register]`: measurements `count`, metadata `path`, `token`.
+
+  - `[:macrina, :observe, :cancel]`: measurements `count`, metadata `path`, `token`.
+
 
   All event names go through `Macrina.Telemetry.event_name/1`, which
   prepends `[:macrina]`. Attach handlers with the prefixed name.
 
-  This catalogue is part of the 1.0 surface — additions are
-  non-breaking; renames or removals are breaking and will be
-  documented in `CHANGELOG.md`.
+  This catalogue is part of the 1.0 surface. Additions are non-breaking.
+  Renames and removals are breaking and are documented in `CHANGELOG.md`.
   """
   @prefix [:macrina]
 

@@ -2,7 +2,7 @@ defmodule Macrina.ContentFormat do
   @moduledoc false
 
   # Content-Format codec (RFC 7252 §12.3). Maps atoms like `:text_plain` to
-  # integer wire values; unknown integers pass through unchanged for forward
+  # integer wire values. Unknown integers pass through unchanged for
   # compatibility with newer IANA entries.
   @formats_by_name %{
     text_plain: 0,

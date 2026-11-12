@@ -1,11 +1,11 @@
 defmodule Macrina.Handler do
   @moduledoc false
 
-  # Internal router dispatch. The session holds a `{router_module, context}`
-  # tuple and calls `Macrina.Handler.call/3` to route each decoded message or
-  # Block1 chunk through the user's `Macrina.Router` implementation. Discovery
-  # responses (`/.well-known/core`) and router error replies are produced
-  # here too so `Macrina.Peer.Session` doesn't need to know about routing.
+  # Router dispatch: `Macrina.Handler.call/3` routes each message or Block1
+  # chunk through the user's `Macrina.Router`.
+  #
+  # Discovery responses (`/.well-known/core`) and router error replies are
+  # produced here, so `Macrina.Peer.Session` stays free of routing logic.
 
   alias Macrina.{
     Block1.Chunk,

@@ -56,10 +56,8 @@ defmodule Macrina.Message.Opts.BinaryTest do
   end
 
   describe "validate/1" do
-    # `validate/1` runs the same shape+name+value checks as `encode/1` but
-    # stops short of allocating the encoded options binary. Wave C added it
-    # so `Macrina.Message.build/2` can validate options at build time without
-    # paying for an encoding pass that gets thrown away.
+    # `validate/1` runs the same shape, name, and value checks as `encode/1`
+    # and skips allocating the encoded options binary.
 
     test "returns :ok for an empty option list" do
       assert Binary.validate([]) == :ok
@@ -76,7 +74,7 @@ defmodule Macrina.Message.Opts.BinaryTest do
     end
 
     test "returns an error for malformed value types" do
-      # Content-Format is registered as UINT; a string is invalid.
+      # Content-Format is registered as UINT, so a string is invalid.
       assert Binary.validate([{"Content-Format", "text/plain"}]) ==
                {:error, {:invalid_option_value, "Content-Format", "text/plain"}}
     end

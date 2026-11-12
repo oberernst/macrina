@@ -8,8 +8,8 @@ defmodule Macrina.BlockTransfer do
   alias Macrina.{Blocks, Message, Registry}
   alias Macrina.Message.Opts.Block
 
-  @assembling_timeout :timer.minutes(5)
-  @complete_timeout :timer.seconds(247)
+  @assembling_timeout_ms :timer.minutes(5)
+  @complete_timeout_ms :timer.seconds(247)
 
   defstruct [:ip, :token, :handler, :blocks, :last_reply, :phase]
 
@@ -99,7 +99,7 @@ defmodule Macrina.BlockTransfer do
     }
 
     Logger.info("[BlockTransfer] started", peer: peer_id(state))
-    {:ok, state, @assembling_timeout}
+    {:ok, state, @assembling_timeout_ms}
   end
 
   @impl true
@@ -120,7 +120,7 @@ defmodule Macrina.BlockTransfer do
 
     {:ok, ack_bin} = message |> Message.response(code: :continue, type: :ack) |> encode_reply()
 
-    {:reply, {:continue, ack_bin}, %{state | blocks: blocks}, @assembling_timeout}
+    {:reply, {:continue, ack_bin}, %{state | blocks: blocks}, @assembling_timeout_ms}
   end
 
   def handle_call(
@@ -146,7 +146,7 @@ defmodule Macrina.BlockTransfer do
         )
 
         full = %Message{message | payload: payload}
-        {:reply, {:assembled, full}, %{state | blocks: blocks}, @assembling_timeout}
+        {:reply, {:assembled, full}, %{state | blocks: blocks}, @assembling_timeout_ms}
 
       {:error, {:missing, n}} ->
         Logger.info("[BlockTransfer] blocks incomplete",
@@ -160,7 +160,7 @@ defmodule Macrina.BlockTransfer do
           |> Message.response(code: :request_entity_incomplete, type: :ack)
           |> encode_reply()
 
-        {:reply, {:incomplete, bin}, %{state | blocks: blocks}, @assembling_timeout}
+        {:reply, {:incomplete, bin}, %{state | blocks: blocks}, @assembling_timeout_ms}
     end
   end
 
@@ -174,7 +174,7 @@ defmodule Macrina.BlockTransfer do
       cached: not is_nil(reply_bin)
     )
 
-    {:reply, {:duplicate, reply_bin}, state, @complete_timeout}
+    {:reply, {:duplicate, reply_bin}, state, @complete_timeout_ms}
   end
 
   def handle_call(
@@ -189,7 +189,7 @@ defmodule Macrina.BlockTransfer do
       reply_size: reply_size
     )
 
-    {:reply, :ok, %{state | last_reply: reply_bin, phase: :complete}, @complete_timeout}
+    {:reply, :ok, %{state | last_reply: reply_bin, phase: :complete}, @complete_timeout_ms}
   end
 
   @impl true
