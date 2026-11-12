@@ -6,8 +6,7 @@ defmodule Macrina.Message do
   (RFC 7252, Section 3). Also provides builders for constructing request and
   response messages with automatic token generation and message-ID assignment.
 
-  Application code normally uses `Macrina.Request` and `Macrina.Response`
-  instead of this module directly.
+  Application code uses `Macrina.Request` and `Macrina.Response`.
   """
 
   alias Macrina.{Codes, Message.Opts.Binary, Message.Opts.Block, Types}
@@ -190,10 +189,11 @@ defmodule Macrina.Message do
 
   @doc """
   Header-only parse. Returns `{:ok, %{id, type, token}}` when the 4-byte
-  CoAP header plus token can be extracted, regardless of whether the
-  option bytes parse cleanly. Used by `Macrina.Peer.Session` to satisfy
-  RFC 7252 §4.2 — a malformed Confirmable message must still receive a
-  matching RST, and the matching id has to come from somewhere.
+  CoAP header plus token can be extracted, whether or not the option bytes
+  parse cleanly.
+
+  RFC 7252 §4.2 requires a malformed Confirmable message to receive a
+  matching RST, which needs the id from this parse.
   """
   @spec decode_envelope(binary()) ::
           {:ok, %{id: 0..0xFFFF, type: Types.t(), token: binary()}} | :error

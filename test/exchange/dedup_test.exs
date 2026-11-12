@@ -1,10 +1,9 @@
 defmodule Macrina.Exchange.DedupTest do
   use ExUnit.Case, async: true
 
-  # Direct tests for the pure reply-cache helper extracted from
-  # `Macrina.Exchange`. The cache is a plain `%{id => entry}` map; these tests
-  # pin down the four primitives the exchange relies on (`new/0`, `put/4`,
-  # `fetch/4`, and the implicit expiry policy under `:infinity`).
+  # Direct tests for the pure reply-cache helper. The cache is a plain
+  # `%{id => entry}` map. The tests cover `new/0`, `put/4`, `fetch/4`, and
+  # the expiry policy under `:infinity`.
 
   alias Macrina.Exchange.Dedup
 
@@ -66,7 +65,7 @@ defmodule Macrina.Exchange.DedupTest do
     test "returns :error once the entry's age meets or exceeds the lifetime" do
       cache = Dedup.put(Dedup.new(), 24, "stale", 1_000)
 
-      # exactly at the boundary is considered expired (age >= lifetime)
+      # An entry expires when age >= lifetime.
       assert Dedup.fetch(cache, 24, 2_000, 1_000) == :error
       # strictly past the boundary too
       assert Dedup.fetch(cache, 24, 5_000, 1_000) == :error

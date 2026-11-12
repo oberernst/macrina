@@ -42,7 +42,6 @@ defmodule Macrina.MixProject do
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
       extra_applications: [:crypto, :logger, :ssl],
@@ -53,6 +52,8 @@ defmodule Macrina.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:comment_review,
+       github: "oberernst/comment_review", tag: "v0.1.2", only: [:dev, :test], runtime: false},
       {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.38", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

@@ -136,18 +136,16 @@ defmodule Macrina.EndpointTest do
   end
 
   describe "next_message_id/1" do
-    # Wave C replaced `Enum.random(10000..19999)` per-message with a
-    # per-endpoint atomic counter. The ref lives on `Macrina.Endpoint`
-    # state; this test pins down the wrap and monotonic-modulo-65536
-    # behaviour without standing up a real socket.
+    # The per-endpoint atomic counter ref lives on `Macrina.Endpoint` state.
+    # These tests cover wrap and monotonic-modulo-65536 behaviour without a
+    # real socket.
 
     test "returns sequential ids modulo 65_536 for a fresh counter" do
       ref = :atomics.new(1, signed: false)
 
       ids = for _ <- 1..5, do: Endpoint.next_message_id(ref)
 
-      # Five sequential calls produce five consecutive values; with a fresh
-      # counter that's [1, 2, 3, 4, 5].
+      # A fresh counter yields consecutive values starting at 1.
       assert ids == [1, 2, 3, 4, 5]
     end
 

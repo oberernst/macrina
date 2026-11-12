@@ -107,8 +107,8 @@ defmodule Macrina.Message.CodecPropertyTest do
       assert decoded.type == msg.type
       assert decoded.payload == msg.payload
 
-      # Option order isn't preserved across encode/decode for repeated
-      # numbers handled by `next_options`; canonicalize via name + value.
+      # Option order varies across encode/decode for repeated numbers handled
+      # by `next_options`. Sorting canonicalizes by name and value.
       assert Enum.sort(decoded.options) == Enum.sort(msg.options)
     end
   end

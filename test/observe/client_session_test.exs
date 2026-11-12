@@ -1,17 +1,16 @@
 defmodule Macrina.Observe.ClientSessionTest do
   use ExUnit.Case, async: true
 
-  # Direct tests for the pure client-side observe bookkeeping extracted from
-  # `Macrina.Peer.Session`. A "session" is a `%{token => entry}` map
-  # tracking the subscriptions this connection initiated. The effectful shell
-  # owns socket I/O; this module owns nothing but the data.
+  # Direct tests for the pure client-side observe bookkeeping. A session is
+  # a `%{token => entry}` map tracking the subscriptions this connection
+  # initiated. `Macrina.Peer.Session` owns socket I/O.
 
   alias Macrina.Observe.ClientSession
   alias Macrina.Observe.Subscription
   alias Macrina.Request
 
-  # The session module never inspects the inner Request, so a minimal struct
-  # is enough to satisfy `@enforce_keys` on the parent Subscription.
+  # The session module ignores the inner Request. A minimal struct satisfies
+  # `@enforce_keys` on the parent Subscription.
   defp build_subscription(token) do
     %Subscription{
       connection: self(),
@@ -116,10 +115,9 @@ defmodule Macrina.Observe.ClientSessionTest do
   end
 
   describe "stale?/2" do
-    # Staleness encodes RFC 7641 §3.4: a notification is stale if its observe
-    # value is strictly less than what we've already seen, OR equal but with
-    # no in-flight transfers (so we are between blockwise rounds for the same
-    # version and the new same-numbered notification is genuinely a no-op).
+    # RFC 7641 §3.4: stale means below the last seen observe value, or equal
+    # with no in-flight transfers. An equal value falls between blockwise
+    # rounds of one version, so it is a no-op.
 
     test "is never stale before a baseline is set (last_observe: nil)" do
       entry = %{last_observe: nil, transfers: %{}}

@@ -1,13 +1,11 @@
 defmodule Macrina.Peer.Block1Server do
   @moduledoc false
 
-  # Pure Block1 (RFC 7959 §2.5) server-side ingest. Decides what should
-  # happen for each incoming Block1 message — store it and ask for the
-  # next one, surface a streaming chunk to the router, hand a fully
-  # assembled payload to the router, or reject the upload — and returns
-  # the updated exchange alongside the decision. All UDP I/O, handler
-  # invocation, telemetry, and dedup caching stay in
-  # `Macrina.Peer.Session`, which interprets the decision.
+  # Pure Block1 (RFC 7959 §2.5) server-side ingest. Decides each incoming
+  # message's outcome: store, stream a chunk, assemble, or reject.
+  #
+  # `Macrina.Peer.Session` interprets the decision and owns all UDP I/O, handler
+  # invocation, telemetry, and dedup caching.
 
   alias Macrina.{Block1, Blockwise, Exchange, Message}
   alias Macrina.Block1.Chunk
@@ -22,9 +20,10 @@ defmodule Macrina.Peer.Block1Server do
 
   @doc """
   Decides how to handle a Block1 message against the current policy and
-  exchange state. Returns `{decision, next_exchange}`. The caller is
-  responsible for any handler invocation, telemetry, and reply
-  transmission implied by the decision.
+  exchange state. Returns `{decision, next_exchange}`.
+
+  Handler invocation, telemetry, and reply transmission implied by the
+  decision stay with the caller.
   """
   @spec ingest(Block1.t(), Exchange.t(), Message.t()) :: {decision(), Exchange.t()}
   def ingest(%Block1{} = policy, %Exchange{} = exchange, %Message{} = message) do
@@ -42,10 +41,12 @@ defmodule Macrina.Peer.Block1Server do
   end
 
   @doc """
-  Returns the Block1 control block Macrina echoes back to a client on a
-  reply to an incoming Block1 message — the same block number with
-  `more: false` and the negotiated block size (the policy's preferred
-  size, capped by the client's requested size).
+  Returns the Block1 control block Macrina echoes back on a reply to an
+  incoming Block1 message. It carries the same block number with
+  `more: false`.
+
+  The size is the policy's preferred size capped by the client's requested
+  size.
   """
   @spec response_block(Block1.t(), Message.t()) :: Block.t() | nil
   def response_block(%Block1{} = policy, %Message{descriptive_block: %Block{} = block}) do

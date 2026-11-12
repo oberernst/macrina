@@ -29,8 +29,6 @@ defmodule Macrina.Message.Opts.Binary do
   # block options are their own type
   @block [23, 27]
 
-  # ------------------------------------------- Decoder ------------------------------------------ #
-
   @spec decode(message :: binary(), delta_sum :: integer(), [option()]) ::
           {:ok, {[option()], payload()}} | {:error, decode_error()}
   def decode(binary, sum \\ 0, options \\ [])
@@ -83,9 +81,7 @@ defmodule Macrina.Message.Opts.Binary do
   @spec decode_block(integer(), integer(), integer()) :: Block.t()
   def decode_block(num, m, szx) do
     # CoAP block size encoding (RFC 7959 §2.2): size = 2^(szx + 4).
-    # `bsl(1, szx + 4)` is exact integer arithmetic — the prior
-    # `:math.pow |> Float.ceil |> trunc` round-trip was both slower and only
-    # accidentally correct for the integer cases the protocol allows.
+    # `bsl(1, szx + 4)` is exact integer arithmetic.
     %Block{number: num, more: m == 1, size: bsl(1, szx + 4)}
   end
 
@@ -147,8 +143,6 @@ defmodule Macrina.Message.Opts.Binary do
     {:ok, {decoded_value, rest}}
   end
 
-  # ------------------------------------------- Encoder ------------------------------------------ #
-
   @spec encode([option()]) :: {:ok, binary()} | {:error, encode_error()}
   def encode(options) when is_list(options) do
     with {:ok, encoded_options} <- encode_values(options),
@@ -165,10 +159,7 @@ defmodule Macrina.Message.Opts.Binary do
   Validates an option list using the same shape, name, and value checks as
   `encode/1`, but stops short of allocating the encoded options binary.
 
-  Cheaper than `encode/1` when the caller only needs to know whether the
-  options are well-formed — `Macrina.Message.build/2` uses it as a build-time
-  guard so it doesn't have to run the full encode pass twice (once at build,
-  once at message encode time).
+  Cheaper than `encode/1` when only well-formedness matters.
   """
   @spec validate([option()]) :: :ok | {:error, encode_error()}
   def validate(options) when is_list(options) do
@@ -216,10 +207,8 @@ defmodule Macrina.Message.Opts.Binary do
     end
   end
 
-  # CoAP block-size encoding (RFC 7959 §2.2). Only sizes 16..1024 are legal;
-  # szx 7 (size 2048) is reserved. A 7-clause function gives us O(1) dispatch
-  # via the BEAM's pattern-match jump table without a runtime map lookup.
   @spec szx_for_size(pos_integer()) :: 0..6
+  # RFC 7959 §2.2 reserves szx 7 (size 2048).
   defp szx_for_size(16), do: 0
   defp szx_for_size(32), do: 1
   defp szx_for_size(64), do: 2

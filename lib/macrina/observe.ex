@@ -3,10 +3,10 @@ defmodule Macrina.Observe do
 
   # Server-side observe registry (RFC 7641). State lives in
   # `Macrina.Observe.Registry`, a `:duplicate`-keys `Registry` keyed by
-  # `{endpoint_pid, path}`. Subscribers self-register from the
-  # `Macrina.Peer.Session` process, so Registry's pid monitor evicts a
-  # subscription automatically when its session dies — no central
-  # GenServer, no drop-connection book-keeping.
+  # `{endpoint_pid, path}`.
+  #
+  # Subscribers self-register from the `Macrina.Peer.Session` process.
+  # Registry's pid monitor evicts a subscription when its session dies.
 
   alias Macrina.{Discovery.Resource, Telemetry}
 
@@ -29,10 +29,10 @@ defmodule Macrina.Observe do
   Subscribes the calling process to `endpoint`/`path` under `token`.
 
   Returns `{:ok, 0}` for the initial sequence number, or `{:error, reason}`
-  if the path is not a valid CoAP resource path. Must be called from the
-  process that owns the subscription — typically a `Macrina.Peer.Session`
-  — so the Registry's pid monitor can evict the entry when the owner
-  exits.
+  if the path fails to parse as a CoAP resource path.
+
+  The caller owns the subscription, typically a `Macrina.Peer.Session`.
+  The Registry's pid monitor evicts the entry when the owner exits.
   """
   @spec subscribe(pid(), String.t() | path(), binary()) ::
           {:ok, 0} | {:error, term()}
@@ -57,9 +57,10 @@ defmodule Macrina.Observe do
 
   @doc """
   Cancels the calling process's subscription on `endpoint`/`path` that
-  matches `token`. Other subscriptions held by the same process — on
-  other paths or under other tokens — are untouched. Must be called
-  from the same process that called `subscribe/3`.
+  matches `token`. Subscriptions held by the same process on other paths or
+  under other tokens stay in place.
+
+  The caller is the process that called `subscribe/3`.
   """
   @spec cancel(pid(), String.t() | path(), binary()) :: :ok | {:error, term()}
   def cancel(endpoint, path, token) when is_pid(endpoint) and is_binary(token) do

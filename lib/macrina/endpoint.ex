@@ -3,8 +3,7 @@ defmodule Macrina.Endpoint do
 
   # Endpoint socket manager. GenServer that opens a transport (default
   # `Macrina.Transport.UDP`) and spawns a `Macrina.Peer.Session` per
-  # remote peer. Not a public entry point — use
-  # `Macrina.Server.start_link/1` instead.
+  # remote peer. `Macrina.Server.start_link/1` is the public entry point.
 
   use GenServer
   alias Macrina.{Block1, ConnectionSupervisor, Peer.Session, Router, Telemetry, Transport}
@@ -13,8 +12,6 @@ defmodule Macrina.Endpoint do
   @message_id_modulus 65_536
 
   defstruct [:handler, :message_id_counter, :socket, :transport, connection_opts: []]
-
-  # ------------------------------------------- CLIENT ------------------------------------------- #
 
   def start_link(args) do
     with {:ok, args} <- normalize_router_opt(args),
@@ -84,12 +81,9 @@ defmodule Macrina.Endpoint do
     end
   end
 
-  # Per-endpoint atomic counter, replacing the prior `Enum.random(10000..19999)`
-  # default. Seeded with a random initial value so two endpoints in the same
-  # VM that happen to talk to overlapping peers don't collide on their first
-  # outbound message id. RFC 7252 §4.4 only requires monotonic-with-wrap
-  # within a single conversation; the seed avoids cross-endpoint birthday
-  # collisions cheaply.
+  # Per-endpoint atomic counter with a random initial value. The seed keeps
+  # two endpoints in one VM from colliding on their first outbound message id.
+  # RFC 7252 §4.4 requires only monotonic-with-wrap ids within a conversation.
   defp new_message_id_counter do
     ref = :atomics.new(1, signed: false)
     :atomics.put(ref, 1, :rand.uniform(@message_id_modulus) - 1)
@@ -123,8 +117,6 @@ defmodule Macrina.Endpoint do
   def socket(endpoint \\ __MODULE__) do
     safe_call(endpoint, :socket)
   end
-
-  # ------------------------------------------- SERVER ------------------------------------------- #
 
   def handle_call(:handler, _from, state) do
     {:reply, {:ok, state.handler}, state}

@@ -37,7 +37,7 @@ defmodule Macrina.Message.OptsTest do
     end
 
     test "returns nil for an unregistered number" do
-      # 0 and 2 are reserved/unused; 100 is well outside the registered range.
+      # 0 and 2 are reserved or unused. 100 is outside the registered range.
       assert Opts.name(0) == nil
       assert Opts.name(2) == nil
       assert Opts.name(100) == nil
